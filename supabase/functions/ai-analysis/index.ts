@@ -14,7 +14,7 @@ Deno.serve(async (req) => {
   try {
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
     const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-    const claudeApiKey = Deno.env.get("CLAUDE_API");
+    const claudeApiKey = Deno.env.get("ANTHROPIC_API_KEY");
     const supabase = createClient(supabaseUrl, supabaseKey);
 
     const { symbol, date } = await req.json();
