@@ -16,6 +16,7 @@ export default {
       fontFamily: {
         display: ["Space Grotesk", "system-ui", "sans-serif"],
         body: ["Inter", "system-ui", "sans-serif"],
+        mono: ["JetBrains Mono", "monospace"],
       },
       colors: {
         border: "hsl(var(--border))",
@@ -65,6 +66,9 @@ export default {
           up: "hsl(var(--chart-up))",
           down: "hsl(var(--chart-down))",
         },
+        bullish: "hsl(var(--bullish))",
+        bearish: "hsl(var(--bearish))",
+        neutral: "hsl(var(--neutral))",
       },
       borderRadius: {
         lg: "var(--radius)",
