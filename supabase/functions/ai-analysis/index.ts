@@ -14,7 +14,8 @@ Deno.serve(async (req) => {
   try {
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
     const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-    const lovableApiKey = Deno.env.get("LOVABLE_API_KEY");
+    // Try multiple possible secret names
+    const lovableApiKey = Deno.env.get("LOVABLE_API_KEY") || Deno.env.get("AI_API_KEY") || Deno.env.get("OPENAI_API_KEY");
     const supabase = createClient(supabaseUrl, supabaseKey);
 
     const { symbol, date } = await req.json();
@@ -102,6 +103,7 @@ Gib eine strukturierte Analyse mit:
 
     if (lovableApiKey) {
       try {
+        console.log("Calling AI gateway...");
         const aiResponse = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
           method: "POST",
           headers: {
@@ -109,19 +111,27 @@ Gib eine strukturierte Analyse mit:
             Authorization: `Bearer ${lovableApiKey}`,
           },
           body: JSON.stringify({
-            model: "google/gemini-2.0-flash",
+            model: "google/gemini-3-flash-preview",
             messages: [{ role: "user", content: prompt }],
             max_tokens: 800,
           }),
         });
 
+        console.log("AI response status:", aiResponse.status);
         if (aiResponse.ok) {
           const aiData = await aiResponse.json();
           aiAnalysis = aiData.choices?.[0]?.message?.content ?? "Keine Antwort vom AI-Modell";
+        } else {
+          const errText = await aiResponse.text();
+          console.error("AI gateway error:", aiResponse.status, errText);
+          aiAnalysis = `AI-Fehler (${aiResponse.status}): ${errText.slice(0, 200)}`;
         }
       } catch (aiErr) {
+        console.error("AI fetch error:", aiErr);
         aiAnalysis = `AI-Fehler: ${aiErr.message}`;
       }
+    } else {
+      console.log("No API key found, skipping AI analysis");
     }
 
     // Store in elliott_wave_analysis as AI analysis
