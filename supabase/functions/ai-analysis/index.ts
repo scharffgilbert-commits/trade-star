@@ -14,8 +14,7 @@ Deno.serve(async (req) => {
   try {
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
     const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-    // Try multiple possible secret names
-    const lovableApiKey = Deno.env.get("LOVABLE_API_KEY") || Deno.env.get("AI_API_KEY") || Deno.env.get("OPENAI_API_KEY");
+    const claudeApiKey = Deno.env.get("CLAUDE_API");
     const supabase = createClient(supabaseUrl, supabaseKey);
 
     const { symbol, date } = await req.json();
@@ -101,37 +100,34 @@ Gib eine strukturierte Analyse mit:
 
     let aiAnalysis = "AI-Analyse nicht verfügbar (kein API Key konfiguriert)";
 
-    if (lovableApiKey) {
+    if (claudeApiKey) {
       try {
-        console.log("Calling AI gateway...");
-        const aiResponse = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+        const aiResponse = await fetch("https://api.anthropic.com/v1/messages", {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
-            Authorization: `Bearer ${lovableApiKey}`,
+            "x-api-key": claudeApiKey,
+            "anthropic-version": "2023-06-01",
           },
           body: JSON.stringify({
-            model: "google/gemini-3-flash-preview",
+            model: "claude-sonnet-4-20250514",
+            max_tokens: 1024,
             messages: [{ role: "user", content: prompt }],
-            max_tokens: 800,
           }),
         });
 
-        console.log("AI response status:", aiResponse.status);
         if (aiResponse.ok) {
           const aiData = await aiResponse.json();
-          aiAnalysis = aiData.choices?.[0]?.message?.content ?? "Keine Antwort vom AI-Modell";
+          aiAnalysis = aiData.content?.[0]?.text ?? "Keine Antwort vom AI-Modell";
         } else {
           const errText = await aiResponse.text();
-          console.error("AI gateway error:", aiResponse.status, errText);
+          console.error("Claude API error:", aiResponse.status, errText);
           aiAnalysis = `AI-Fehler (${aiResponse.status}): ${errText.slice(0, 200)}`;
         }
       } catch (aiErr) {
-        console.error("AI fetch error:", aiErr);
+        console.error("Claude fetch error:", aiErr);
         aiAnalysis = `AI-Fehler: ${aiErr.message}`;
       }
-    } else {
-      console.log("No API key found, skipping AI analysis");
     }
 
     // Store in elliott_wave_analysis as AI analysis
@@ -140,7 +136,7 @@ Gib eine strukturierte Analyse mit:
         symbol,
         analysis_date: analysisDate,
         ai_analysis: aiAnalysis,
-        ai_model: "google/gemini-2.0-flash",
+        ai_model: "claude-sonnet-4-20250514",
         primary_confidence: scores.trend_momentum,
         primary_direction: scores.trend_momentum >= 50 ? "LONG" : "SHORT",
       },
