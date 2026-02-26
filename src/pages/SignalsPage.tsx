@@ -1,118 +1,697 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Slider } from "@/components/ui/slider";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { ChevronRight, ChevronDown, TrendingUp, Filter, Target, ShieldAlert, Trophy } from "lucide-react";
+
+// --- Helpers ---
+
+function confidenceToGrade(conf: number | null): string {
+  if (conf == null) return "\u2014";
+  if (conf >= 85) return "A+";
+  if (conf >= 75) return "A";
+  if (conf >= 65) return "B+";
+  if (conf >= 55) return "B";
+  if (conf >= 45) return "C+";
+  if (conf >= 35) return "C";
+  if (conf >= 25) return "D";
+  return "F";
+}
+
+function gradeColor(grade: string): string {
+  if (grade.startsWith("A")) return "bg-bullish/15 text-bullish border-bullish/30";
+  if (grade.startsWith("B")) return "bg-blue-500/15 text-blue-400 border-blue-500/30";
+  if (grade.startsWith("C")) return "bg-yellow-500/15 text-yellow-400 border-yellow-500/30";
+  if (grade === "D") return "bg-orange-500/15 text-orange-400 border-orange-500/30";
+  if (grade === "F") return "bg-bearish/15 text-bearish border-bearish/30";
+  return "bg-muted text-muted-foreground border-border";
+}
+
+function gradeBucket(grade: string): string {
+  if (grade === "A+" || grade === "A") return "A+/A";
+  if (grade === "B+" || grade === "B") return "B+/B";
+  if (grade === "C+" || grade === "C") return "C+/C";
+  return "D/F";
+}
+
+const actionColors: Record<string, string> = {
+  LONG: "bg-bullish/15 text-bullish border-bullish/30",
+  SHORT: "bg-bearish/15 text-bearish border-bearish/30",
+  CASH: "bg-neutral/15 text-neutral border-neutral/30",
+};
+
+type DateRange = "week" | "month" | "quarter" | "all";
+
+function getDateCutoff(range: DateRange): string | null {
+  if (range === "all") return null;
+  const now = new Date();
+  if (range === "week") now.setDate(now.getDate() - 7);
+  else if (range === "month") now.setMonth(now.getMonth() - 1);
+  else if (range === "quarter") now.setMonth(now.getMonth() - 3);
+  return now.toISOString();
+}
+
+// --- Strand Bar (larger version for expanded row) ---
+
+function StrandBarLarge({
+  label,
+  longVal,
+  shortVal,
+  color,
+}: {
+  label: string;
+  longVal: number | null;
+  shortVal: number | null;
+  color: string;
+}) {
+  const primary = longVal ?? shortVal;
+  const secondary = longVal != null && shortVal != null ? shortVal : null;
+
+  return (
+    <div className="space-y-1">
+      <div className="flex items-center justify-between">
+        <span className="text-xs font-semibold text-muted-foreground">{label}</span>
+        <div className="flex gap-2 text-xs font-mono">
+          {longVal != null && (
+            <span className="text-bullish">L: {longVal.toFixed(0)}</span>
+          )}
+          {shortVal != null && (
+            <span className="text-bearish">S: {shortVal.toFixed(0)}</span>
+          )}
+        </div>
+      </div>
+      <div className="h-3 bg-muted rounded-full overflow-hidden relative">
+        {primary != null && (
+          <div
+            className="h-full rounded-full transition-all"
+            style={{
+              width: `${Math.min(100, Math.max(0, primary))}%`,
+              backgroundColor: color,
+            }}
+          />
+        )}
+        {secondary != null && (
+          <div
+            className="absolute top-0 h-full rounded-full opacity-40"
+            style={{
+              width: `${Math.min(100, Math.max(0, secondary))}%`,
+              backgroundColor: color,
+            }}
+          />
+        )}
+      </div>
+    </div>
+  );
+}
+
+// For S2 (single confidence value)
+function StrandBarSingle({
+  label,
+  value,
+  color,
+}: {
+  label: string;
+  value: number | null;
+  color: string;
+}) {
+  return (
+    <div className="space-y-1">
+      <div className="flex items-center justify-between">
+        <span className="text-xs font-semibold text-muted-foreground">{label}</span>
+        <span className="text-xs font-mono text-muted-foreground">
+          {value != null ? `${value.toFixed(0)}%` : "\u2014"}
+        </span>
+      </div>
+      <div className="h-3 bg-muted rounded-full overflow-hidden">
+        <div
+          className="h-full rounded-full transition-all"
+          style={{
+            width: `${Math.min(100, Math.max(0, value ?? 0))}%`,
+            backgroundColor: color,
+          }}
+        />
+      </div>
+    </div>
+  );
+}
+
+// --- Performance Attribution Panel ---
+
+interface PerformanceRow {
+  bucket: string;
+  total: number;
+  hits: number;
+  hitRate: number;
+  avgPnl: number;
+}
+
+function PerformancePanel({
+  decisions,
+  positions,
+}: {
+  decisions: any[];
+  positions: any[] | null;
+}) {
+  const stats = useMemo(() => {
+    const buckets = ["A+/A", "B+/B", "C+/C", "D/F"];
+    const bucketMap: Record<string, { total: number; hits: number; pnlSum: number; pnlCount: number }> = {};
+    buckets.forEach((b) => (bucketMap[b] = { total: 0, hits: 0, pnlSum: 0, pnlCount: 0 }));
+
+    const posMap = new Map<string, any>();
+    if (positions) {
+      for (const p of positions) {
+        if (p.decision_id && p.position_status === "closed") {
+          posMap.set(p.decision_id, p);
+        }
+      }
+    }
+
+    for (const d of decisions) {
+      const grade = confidenceToGrade(d.confidence_score);
+      const bucket = gradeBucket(grade);
+      if (!bucketMap[bucket]) continue;
+      bucketMap[bucket].total++;
+
+      const pos = posMap.get(d.decision_id);
+      if (pos && pos.pnl_percent != null) {
+        bucketMap[bucket].pnlCount++;
+        bucketMap[bucket].pnlSum += Number(pos.pnl_percent);
+        if (Number(pos.pnl_percent) > 0) {
+          bucketMap[bucket].hits++;
+        }
+      }
+    }
+
+    return buckets.map((bucket): PerformanceRow => {
+      const b = bucketMap[bucket];
+      return {
+        bucket,
+        total: b.total,
+        hits: b.hits,
+        hitRate: b.pnlCount > 0 ? (b.hits / b.pnlCount) * 100 : 0,
+        avgPnl: b.pnlCount > 0 ? b.pnlSum / b.pnlCount : 0,
+      };
+    });
+  }, [decisions, positions]);
+
+  const hasPositionData = positions && positions.some((p) => p.position_status === "closed");
+
+  return (
+    <div className="card-elevated rounded-xl border border-border/50 p-4">
+      <div className="flex items-center gap-2 mb-3">
+        <Trophy className="h-4 w-4 text-yellow-400" />
+        <h2 className="font-display text-sm font-semibold text-foreground">
+          Performance-Attribution
+        </h2>
+      </div>
+
+      {!hasPositionData ? (
+        <div className="text-center py-6 text-sm text-muted-foreground">
+          Noch keine Daten &mdash; Performance wird angezeigt, sobald geschlossene Positionen vorliegen.
+        </div>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="text-muted-foreground border-b border-border/30">
+                <th className="text-left p-2 font-medium">Grade</th>
+                <th className="text-right p-2 font-medium">Signale</th>
+                <th className="text-right p-2 font-medium">Treffer</th>
+                <th className="text-right p-2 font-medium">Hit-Rate</th>
+                <th className="text-right p-2 font-medium">Avg P&amp;L</th>
+              </tr>
+            </thead>
+            <tbody>
+              {stats.map((row) => (
+                <tr key={row.bucket} className="border-b border-border/10">
+                  <td className="p-2">
+                    <Badge
+                      variant="outline"
+                      className={`text-[10px] ${gradeColor(row.bucket.split("/")[0])}`}
+                    >
+                      {row.bucket}
+                    </Badge>
+                  </td>
+                  <td className="p-2 text-right font-mono text-foreground">{row.total}</td>
+                  <td className="p-2 text-right font-mono text-foreground">{row.hits}</td>
+                  <td className="p-2 text-right font-mono text-foreground">
+                    {row.hitRate > 0 ? `${row.hitRate.toFixed(1)}%` : "\u2014"}
+                  </td>
+                  <td
+                    className={`p-2 text-right font-mono font-semibold ${
+                      row.avgPnl > 0 ? "text-bullish" : row.avgPnl < 0 ? "text-bearish" : "text-muted-foreground"
+                    }`}
+                  >
+                    {row.avgPnl !== 0
+                      ? `${row.avgPnl > 0 ? "+" : ""}${row.avgPnl.toFixed(1)}%`
+                      : "\u2014"}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// --- Price Level Display ---
+
+function PriceLevel({
+  label,
+  value,
+  color,
+  bgColor,
+  icon,
+}: {
+  label: string;
+  value: number | null;
+  color: string;
+  bgColor: string;
+  icon: React.ReactNode;
+}) {
+  if (value == null) return null;
+  return (
+    <div className={`flex items-center justify-between rounded-lg border px-3 py-2 ${bgColor}`}>
+      <div className={`flex items-center gap-2 ${color}`}>
+        {icon}
+        <span className="text-xs font-semibold">{label}</span>
+      </div>
+      <span className={`font-mono text-sm font-bold ${color}`}>${Number(value).toFixed(2)}</span>
+    </div>
+  );
+}
+
+// --- Expanded Row Detail ---
+
+function ExpandedRowDetail({ d }: { d: any }) {
+  return (
+    <div className="px-4 pb-4 pt-2 space-y-4">
+      {/* 4-Strand Scores + Price Levels side by side */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div className="card-elevated rounded-xl border border-border/50 p-4 space-y-3">
+          <h3 className="font-display text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+            4-Strang-Analyse
+          </h3>
+          <StrandBarLarge
+            label="S1 Technical (30%)"
+            longVal={d.strand1_long_score}
+            shortVal={d.strand1_short_score}
+            color="hsl(217, 91%, 60%)"
+          />
+          <StrandBarSingle
+            label="S2 Elliott Wave (25%)"
+            value={d.strand2_confidence}
+            color="hsl(270, 60%, 60%)"
+          />
+          <StrandBarLarge
+            label="S3 Volume (25%)"
+            longVal={d.strand3_long_score}
+            shortVal={d.strand3_short_score}
+            color="hsl(142, 71%, 45%)"
+          />
+          <StrandBarLarge
+            label="S4 CROC/ICE (20%)"
+            longVal={d.strand4_long_score}
+            shortVal={d.strand4_short_score}
+            color="hsl(30, 90%, 55%)"
+          />
+        </div>
+
+        {/* Entry/Stop/TP Levels */}
+        <div className="card-elevated rounded-xl border border-border/50 p-4 space-y-3">
+          <h3 className="font-display text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+            Preisniveaus
+          </h3>
+          <div className="space-y-2">
+            <PriceLevel
+              label="Entry"
+              value={d.entry_price}
+              color="text-foreground"
+              bgColor="bg-primary/10 border-primary/30"
+              icon={<Target className="h-3.5 w-3.5" />}
+            />
+            <PriceLevel
+              label="Stop-Loss"
+              value={d.stop_loss}
+              color="text-bearish"
+              bgColor="bg-bearish/10 border-bearish/30"
+              icon={<ShieldAlert className="h-3.5 w-3.5" />}
+            />
+            <PriceLevel
+              label="TP 1"
+              value={d.take_profit_1}
+              color="text-bullish"
+              bgColor="bg-bullish/10 border-bullish/30"
+              icon={<TrendingUp className="h-3.5 w-3.5" />}
+            />
+            <PriceLevel
+              label="TP 2"
+              value={d.take_profit_2}
+              color="text-bullish"
+              bgColor="bg-bullish/10 border-bullish/30"
+              icon={<TrendingUp className="h-3.5 w-3.5" />}
+            />
+            <PriceLevel
+              label="TP 3"
+              value={d.take_profit_3}
+              color="text-bullish"
+              bgColor="bg-bullish/10 border-bullish/30"
+              icon={<TrendingUp className="h-3.5 w-3.5" />}
+            />
+          </div>
+
+          {/* CROC / ICE meta */}
+          <div className="pt-2 border-t border-border/30 space-y-1">
+            <div className="flex items-center justify-between text-xs">
+              <span className="text-muted-foreground">CROC Status</span>
+              <span className="font-mono text-foreground">{d.croc_status ?? "\u2014"}</span>
+            </div>
+            <div className="flex items-center justify-between text-xs">
+              <span className="text-muted-foreground">ICE Signale</span>
+              <span className="font-mono text-foreground">
+                {d.ice_signals_active != null ? (d.ice_signals_active ? "Aktiv" : "Inaktiv") : "\u2014"}
+              </span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* AI Reasoning */}
+      {d.reasoning && (
+        <div className="card-elevated rounded-xl border border-border/50 p-4">
+          <h3 className="font-display text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">
+            AI-Begr\u00FCndung
+          </h3>
+          <div className="text-xs text-muted-foreground leading-relaxed whitespace-pre-wrap max-h-64 overflow-y-auto">
+            {d.reasoning}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// --- Main Page ---
 
 export default function SignalsPage() {
   const [symbolFilter, setSymbolFilter] = useState("ALL");
   const [actionFilter, setActionFilter] = useState("ALL");
+  const [dateRange, setDateRange] = useState<DateRange>("all");
+  const [minConfidence, setMinConfidence] = useState(0);
+  const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set());
 
-  const query = useQuery({
+  // Fetch trading decisions
+  const decisionsQuery = useQuery({
     queryKey: ["all-decisions"],
     queryFn: async () => {
       const { data, error } = await supabase
         .from("trading_decisions")
-        .select("symbol, decision_timestamp, action_type, confidence_score, entry_price, stop_loss, take_profit_1, take_profit_2, take_profit_3, reasoning, croc_status, ice_signals_active, strand1_signal, strand2_signal, strand3_signal, strand4_signal")
+        .select(
+          "decision_id, symbol, decision_timestamp, action_type, confidence_score, reasoning, entry_price, stop_loss, take_profit_1, take_profit_2, take_profit_3, croc_status, ice_signals_active, strand1_signal, strand2_signal, strand3_signal, strand4_signal, strand1_long_score, strand1_short_score, strand2_confidence, strand3_long_score, strand3_short_score, strand4_long_score, strand4_short_score, created_at"
+        )
         .order("decision_timestamp", { ascending: false })
-        .limit(200);
+        .limit(500);
       if (error) throw error;
       return data;
     },
   });
 
-  const symbols = [...new Set((query.data ?? []).map((d) => d.symbol))].sort();
-  
-  const filtered = (query.data ?? []).filter((d) => {
-    if (symbolFilter !== "ALL" && d.symbol !== symbolFilter) return false;
-    if (actionFilter !== "ALL" && d.action_type !== actionFilter) return false;
-    return true;
+  // Fetch demo positions for performance attribution
+  const positionsQuery = useQuery({
+    queryKey: ["demo-positions-closed"],
+    queryFn: async () => {
+      const { data, error } = await (supabase as any)
+        .from("demo_positions")
+        .select("id, decision_id, symbol, position_type, position_status, pnl_percent, entry_price, exit_price")
+        .eq("position_status", "closed");
+      if (error) throw error;
+      return data as any[];
+    },
   });
 
-  const actionColors: Record<string, string> = {
-    LONG: "bg-bullish/15 text-bullish",
-    SHORT: "bg-bearish/15 text-bearish",
-    CASH: "bg-neutral/15 text-neutral",
+  const allDecisions = decisionsQuery.data ?? [];
+  const symbols = useMemo(
+    () => [...new Set(allDecisions.map((d) => d.symbol))].sort(),
+    [allDecisions]
+  );
+
+  // Apply filters
+  const filtered = useMemo(() => {
+    const dateCutoff = getDateCutoff(dateRange);
+    return allDecisions.filter((d) => {
+      if (symbolFilter !== "ALL" && d.symbol !== symbolFilter) return false;
+      if (actionFilter !== "ALL" && d.action_type !== actionFilter) return false;
+      if (dateCutoff && d.decision_timestamp && d.decision_timestamp < dateCutoff) return false;
+      if (minConfidence > 0 && (d.confidence_score == null || d.confidence_score < minConfidence))
+        return false;
+      return true;
+    });
+  }, [allDecisions, symbolFilter, actionFilter, dateRange, minConfidence]);
+
+  const toggleRow = (key: string) => {
+    setExpandedRows((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
   };
+
+  const dateRangeButtons: { label: string; value: DateRange }[] = [
+    { label: "Letzte Woche", value: "week" },
+    { label: "Letzter Monat", value: "month" },
+    { label: "Letztes Quartal", value: "quarter" },
+    { label: "Alle", value: "all" },
+  ];
 
   return (
     <div className="space-y-4">
-      <h1 className="font-display text-2xl font-bold text-foreground">Signale & Entscheidungen</h1>
+      <h1 className="font-display text-2xl font-bold text-foreground">
+        Signale &amp; Entscheidungen
+      </h1>
+
+      {/* Performance Attribution Panel */}
+      <PerformancePanel
+        decisions={allDecisions}
+        positions={positionsQuery.data ?? null}
+      />
 
       {/* Filters */}
-      <div className="flex gap-3 flex-wrap">
-        <Select value={symbolFilter} onValueChange={setSymbolFilter}>
-          <SelectTrigger className="w-32">
-            <SelectValue placeholder="Symbol" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="ALL">Alle</SelectItem>
-            {symbols.map((s) => (
-              <SelectItem key={s} value={s}>{s}</SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-        <Select value={actionFilter} onValueChange={setActionFilter}>
-          <SelectTrigger className="w-32">
-            <SelectValue placeholder="Aktion" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="ALL">Alle</SelectItem>
-            <SelectItem value="LONG">LONG</SelectItem>
-            <SelectItem value="SHORT">SHORT</SelectItem>
-            <SelectItem value="CASH">CASH</SelectItem>
-          </SelectContent>
-        </Select>
+      <div className="card-elevated rounded-xl border border-border/50 p-4 space-y-3">
+        <div className="flex items-center gap-2 mb-1">
+          <Filter className="h-4 w-4 text-muted-foreground" />
+          <span className="font-display text-sm font-semibold text-foreground">Filter</span>
+          <span className="text-xs text-muted-foreground ml-auto">
+            {filtered.length} von {allDecisions.length} Signalen
+          </span>
+        </div>
+
+        <div className="flex gap-3 flex-wrap items-end">
+          {/* Symbol Filter */}
+          <div className="space-y-1">
+            <label className="text-[10px] text-muted-foreground uppercase tracking-wider">Symbol</label>
+            <Select value={symbolFilter} onValueChange={setSymbolFilter}>
+              <SelectTrigger className="w-32 h-9">
+                <SelectValue placeholder="Symbol" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="ALL">Alle</SelectItem>
+                {symbols.map((s) => (
+                  <SelectItem key={s} value={s}>
+                    {s}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          {/* Action Filter */}
+          <div className="space-y-1">
+            <label className="text-[10px] text-muted-foreground uppercase tracking-wider">Aktion</label>
+            <Select value={actionFilter} onValueChange={setActionFilter}>
+              <SelectTrigger className="w-32 h-9">
+                <SelectValue placeholder="Aktion" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="ALL">Alle</SelectItem>
+                <SelectItem value="LONG">LONG</SelectItem>
+                <SelectItem value="SHORT">SHORT</SelectItem>
+                <SelectItem value="CASH">CASH</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+
+          {/* Date Range */}
+          <div className="space-y-1">
+            <label className="text-[10px] text-muted-foreground uppercase tracking-wider">Zeitraum</label>
+            <div className="flex gap-1">
+              {dateRangeButtons.map((btn) => (
+                <Button
+                  key={btn.value}
+                  variant={dateRange === btn.value ? "default" : "outline"}
+                  size="sm"
+                  className="h-9 text-xs px-2.5"
+                  onClick={() => setDateRange(btn.value)}
+                >
+                  {btn.label}
+                </Button>
+              ))}
+            </div>
+          </div>
+
+          {/* Min Confidence Slider */}
+          <div className="space-y-1 min-w-[180px]">
+            <label className="text-[10px] text-muted-foreground uppercase tracking-wider">
+              Min. Konfidenz: <span className="font-mono text-foreground">{minConfidence}%</span>
+            </label>
+            <Slider
+              value={[minConfidence]}
+              onValueChange={(val) => setMinConfidence(val[0])}
+              min={0}
+              max={100}
+              step={5}
+              className="w-full"
+            />
+          </div>
+        </div>
       </div>
 
       {/* Table */}
-      <div className="card-elevated rounded-xl border border-border/50 overflow-x-auto">
-        <table className="w-full text-xs">
-          <thead>
-            <tr className="text-muted-foreground border-b border-border/30">
-              <th className="text-left p-3 font-medium">Symbol</th>
-              <th className="text-left p-3 font-medium">Datum</th>
-              <th className="text-left p-3 font-medium">Aktion</th>
-              <th className="text-right p-3 font-medium">Conf.</th>
-              <th className="text-right p-3 font-medium">Entry</th>
-              <th className="text-right p-3 font-medium">Stop</th>
-              <th className="text-right p-3 font-medium">TP1</th>
-              <th className="text-right p-3 font-medium">TP2</th>
-              <th className="text-right p-3 font-medium">TP3</th>
-              <th className="text-left p-3 font-medium">CROC</th>
-              <th className="text-left p-3 font-medium">Stränge</th>
-              <th className="text-left p-3 font-medium max-w-[200px]">Begründung</th>
-            </tr>
-          </thead>
-          <tbody>
-            {filtered.map((d, i) => (
-              <tr key={i} className="border-b border-border/10 hover:bg-muted/30">
-                <td className="p-3 font-mono font-bold text-foreground">{d.symbol}</td>
-                <td className="p-3 font-mono text-muted-foreground">
-                  {new Date(d.decision_timestamp).toLocaleDateString("de-DE")}
-                </td>
-                <td className="p-3">
-                  <span className={`font-semibold px-1.5 py-0.5 rounded ${actionColors[d.action_type] ?? ""}`}>
-                    {d.action_type}
-                  </span>
-                </td>
-                <td className="p-3 text-right font-mono text-foreground">{d.confidence_score != null ? `${Number(d.confidence_score).toFixed(0)}%` : "—"}</td>
-                <td className="p-3 text-right font-mono text-muted-foreground">{d.entry_price != null ? `$${Number(d.entry_price).toFixed(2)}` : "—"}</td>
-                <td className="p-3 text-right font-mono text-muted-foreground">{d.stop_loss != null ? `$${Number(d.stop_loss).toFixed(2)}` : "—"}</td>
-                <td className="p-3 text-right font-mono text-muted-foreground">{d.take_profit_1 != null ? `$${Number(d.take_profit_1).toFixed(2)}` : "—"}</td>
-                <td className="p-3 text-right font-mono text-muted-foreground">{d.take_profit_2 != null ? `$${Number(d.take_profit_2).toFixed(2)}` : "—"}</td>
-                <td className="p-3 text-right font-mono text-muted-foreground">{d.take_profit_3 != null ? `$${Number(d.take_profit_3).toFixed(2)}` : "—"}</td>
-                <td className="p-3 text-muted-foreground">{d.croc_status ?? "—"}</td>
-                <td className="p-3 font-mono text-muted-foreground text-[10px]">
-                  {[d.strand1_signal, d.strand2_signal, d.strand3_signal, d.strand4_signal].filter(Boolean).join("/") || "—"}
-                </td>
-                <td className="p-3 text-muted-foreground max-w-[200px] truncate" title={d.reasoning ?? ""}>
-                  {d.reasoning?.slice(0, 80) ?? "—"}
-                </td>
+      <div className="card-elevated rounded-xl border border-border/50 overflow-hidden">
+        <div className="overflow-x-auto">
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="text-muted-foreground border-b border-border/30 bg-muted/20">
+                <th className="w-8 p-3" />
+                <th className="text-left p-3 font-medium">Symbol</th>
+                <th className="text-left p-3 font-medium">Datum</th>
+                <th className="text-left p-3 font-medium">Aktion</th>
+                <th className="text-center p-3 font-medium">Grade</th>
+                <th className="text-right p-3 font-medium">Konfidenz</th>
+                <th className="text-right p-3 font-medium">Entry</th>
+                <th className="text-right p-3 font-medium">Stop</th>
+                <th className="text-right p-3 font-medium">TP1</th>
+                <th className="text-left p-3 font-medium">CROC</th>
+                <th className="text-left p-3 font-medium">Str\u00E4nge</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {filtered.length === 0 && (
+                <tr>
+                  <td colSpan={11} className="text-center py-12 text-sm text-muted-foreground">
+                    Keine Signale gefunden.
+                  </td>
+                </tr>
+              )}
+              {filtered.map((d, i) => {
+                const rowKey = d.decision_id ?? `row-${i}`;
+                const isExpanded = expandedRows.has(rowKey);
+                const grade = confidenceToGrade(d.confidence_score);
+
+                return (
+                  <SignalRow
+                    key={rowKey}
+                    d={d}
+                    rowKey={rowKey}
+                    grade={grade}
+                    isExpanded={isExpanded}
+                    onToggle={toggleRow}
+                  />
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
+  );
+}
+
+// --- Signal Row (summary + expandable detail) ---
+
+function SignalRow({
+  d,
+  rowKey,
+  grade,
+  isExpanded,
+  onToggle,
+}: {
+  d: any;
+  rowKey: string;
+  grade: string;
+  isExpanded: boolean;
+  onToggle: (key: string) => void;
+}) {
+  return (
+    <>
+      <tr
+        onClick={() => onToggle(rowKey)}
+        className={`border-b border-border/10 cursor-pointer transition-colors ${
+          isExpanded ? "bg-muted/40" : "hover:bg-muted/20"
+        }`}
+      >
+        <td className="p-3 text-muted-foreground">
+          {isExpanded ? (
+            <ChevronDown className="h-4 w-4 transition-transform" />
+          ) : (
+            <ChevronRight className="h-4 w-4 transition-transform" />
+          )}
+        </td>
+        <td className="p-3 font-mono font-bold text-foreground">{d.symbol}</td>
+        <td className="p-3 font-mono text-muted-foreground">
+          {d.decision_timestamp
+            ? new Date(d.decision_timestamp).toLocaleDateString("de-DE", {
+                day: "2-digit",
+                month: "2-digit",
+                year: "2-digit",
+              })
+            : "\u2014"}
+        </td>
+        <td className="p-3">
+          <span
+            className={`font-semibold px-2 py-0.5 rounded border text-[11px] ${
+              actionColors[d.action_type] ?? "bg-muted text-muted-foreground border-border"
+            }`}
+          >
+            {d.action_type}
+          </span>
+        </td>
+        <td className="p-3 text-center">
+          <Badge variant="outline" className={`text-[10px] font-bold ${gradeColor(grade)}`}>
+            {grade}
+          </Badge>
+        </td>
+        <td className="p-3 text-right font-mono text-foreground">
+          {d.confidence_score != null ? `${Number(d.confidence_score).toFixed(0)}%` : "\u2014"}
+        </td>
+        <td className="p-3 text-right font-mono text-muted-foreground">
+          {d.entry_price != null ? `$${Number(d.entry_price).toFixed(2)}` : "\u2014"}
+        </td>
+        <td className="p-3 text-right font-mono text-muted-foreground">
+          {d.stop_loss != null ? `$${Number(d.stop_loss).toFixed(2)}` : "\u2014"}
+        </td>
+        <td className="p-3 text-right font-mono text-muted-foreground">
+          {d.take_profit_1 != null ? `$${Number(d.take_profit_1).toFixed(2)}` : "\u2014"}
+        </td>
+        <td className="p-3 text-muted-foreground text-[11px]">{d.croc_status ?? "\u2014"}</td>
+        <td className="p-3 font-mono text-muted-foreground text-[10px]">
+          {[d.strand1_signal, d.strand2_signal, d.strand3_signal, d.strand4_signal]
+            .filter(Boolean)
+            .join(" / ") || "\u2014"}
+        </td>
+      </tr>
+      {isExpanded && (
+        <tr className="bg-muted/20 border-b border-border/10">
+          <td colSpan={11}>
+            <ExpandedRowDetail d={d} />
+          </td>
+        </tr>
+      )}
+    </>
   );
 }

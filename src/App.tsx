@@ -6,6 +6,8 @@ import { BrowserRouter, Routes, Route } from "react-router-dom";
 import AppLayout from "@/layouts/AppLayout";
 import Dashboard from "@/pages/Dashboard";
 import SymbolDetail from "@/pages/SymbolDetail";
+import Positions from "@/pages/Positions";
+import Portfolio from "@/pages/Portfolio";
 import SignalsPage from "@/pages/SignalsPage";
 import CrocMonitor from "@/pages/CrocMonitor";
 import RunPage from "@/pages/RunPage";
@@ -23,6 +25,8 @@ const App = () => (
           <Route element={<AppLayout />}>
             <Route path="/" element={<Dashboard />} />
             <Route path="/symbol/:symbol" element={<SymbolDetail />} />
+            <Route path="/positions" element={<Positions />} />
+            <Route path="/portfolio" element={<Portfolio />} />
             <Route path="/signals" element={<SignalsPage />} />
             <Route path="/croc" element={<CrocMonitor />} />
             <Route path="/run" element={<RunPage />} />

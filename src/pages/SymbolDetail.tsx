@@ -1,18 +1,21 @@
 import { useParams, useNavigate } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft, TrendingUp, TrendingDown } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Skeleton } from "@/components/ui/skeleton";
-import PriceChart from "@/components/symbol/PriceChart";
+import { Badge } from "@/components/ui/badge";
+import TradingViewChart from "@/components/symbol/TradingViewChart";
+import TradeActionPanel from "@/components/symbol/TradeActionPanel";
 import CrocLochstreifen from "@/components/symbol/CrocLochstreifen";
 import IceSignalsList from "@/components/symbol/IceSignalsList";
 import IndicatorsTable from "@/components/symbol/IndicatorsTable";
 import DecisionHistory from "@/components/symbol/DecisionHistory";
+import { cn } from "@/lib/utils";
 
 export default function SymbolDetail() {
   const { symbol } = useParams<{ symbol: string }>();
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
 
   const symbolInfo = useQuery({
     queryKey: ["symbol-info", symbol],
@@ -42,7 +45,55 @@ export default function SymbolDetail() {
     enabled: !!symbol,
   });
 
+  // Get latest decision for chart overlays
+  const latestDecision = useQuery({
+    queryKey: ["latest-decision-overlay", symbol],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("trading_decisions")
+        .select("entry_price, stop_loss, take_profit_1, take_profit_2, take_profit_3, action_type, confidence_score, decision_timestamp")
+        .eq("symbol", symbol!)
+        .order("decision_timestamp", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (error) throw error;
+      return data;
+    },
+    enabled: !!symbol,
+  });
+
+  // Get active position for chart overlays
+  const activePosition = useQuery({
+    queryKey: ["active-position-overlay", symbol],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("demo_positions")
+        .select("entry_price, stop_loss, take_profit_1, take_profit_2, take_profit_3")
+        .eq("symbol", symbol!)
+        .in("position_status", ["OPEN"])
+        .maybeSingle();
+      if (error) throw error;
+      return data;
+    },
+    enabled: !!symbol,
+  });
+
   if (!symbol) return null;
+
+  const currentPrice = latestPrice.data ? Number(latestPrice.data.close) : undefined;
+  const prevClose = latestPrice.data ? Number(latestPrice.data.open) : 0;
+  const priceChange = currentPrice && prevClose ? currentPrice - prevClose : 0;
+  const priceChangePct = prevClose > 0 ? (priceChange / prevClose) * 100 : 0;
+
+  // Use active position levels for chart, or fall back to latest decision
+  const chartOverlay = activePosition.data || latestDecision.data;
+
+  const handleTradeExecuted = () => {
+    queryClient.invalidateQueries({ queryKey: ["active-position-overlay", symbol] });
+    queryClient.invalidateQueries({ queryKey: ["active-position", symbol] });
+    queryClient.invalidateQueries({ queryKey: ["open-positions"] });
+    queryClient.invalidateQueries({ queryKey: ["demo-account"] });
+  };
 
   return (
     <div className="space-y-6">
@@ -56,22 +107,80 @@ export default function SymbolDetail() {
             <h1 className="font-display text-2xl font-bold text-foreground">
               {symbol}
             </h1>
-            {latestPrice.data && (
+            {currentPrice && (
               <span className="font-mono text-xl font-semibold text-foreground">
-                ${Number(latestPrice.data.close).toFixed(2)}
+                ${currentPrice.toFixed(2)}
               </span>
+            )}
+            {priceChange !== 0 && (
+              <Badge
+                variant="outline"
+                className={cn(
+                  "text-xs font-mono",
+                  priceChange >= 0
+                    ? "border-green-500/30 text-green-400 bg-green-500/10"
+                    : "border-red-500/30 text-red-400 bg-red-500/10"
+                )}
+              >
+                {priceChange >= 0 ? (
+                  <TrendingUp className="h-3 w-3 mr-1" />
+                ) : (
+                  <TrendingDown className="h-3 w-3 mr-1" />
+                )}
+                {priceChange >= 0 ? "+" : ""}
+                {priceChangePct.toFixed(2)}%
+              </Badge>
+            )}
+            {latestDecision.data && (
+              <Badge
+                variant="outline"
+                className={cn(
+                  "text-xs",
+                  latestDecision.data.action_type === "LONG" && "border-green-500/30 text-green-400",
+                  latestDecision.data.action_type === "SHORT" && "border-red-500/30 text-red-400",
+                  latestDecision.data.action_type === "CASH" && "border-yellow-500/30 text-yellow-400"
+                )}
+              >
+                AI: {latestDecision.data.action_type} ({Number(latestDecision.data.confidence_score)}%)
+              </Badge>
             )}
           </div>
           <p className="text-sm text-muted-foreground">
             {symbolInfo.data?.name ?? ""} · {symbolInfo.data?.exchange ?? ""} · {symbolInfo.data?.type ?? ""}
+            {latestDecision.data?.decision_timestamp && (
+              <span className="ml-2 text-xs">
+                · Analyse: {new Date(latestDecision.data.decision_timestamp).toLocaleDateString("de-DE")}
+              </span>
+            )}
           </p>
         </div>
       </div>
 
-      {/* Price Chart */}
-      <div className="card-elevated rounded-xl border border-border/50 p-4">
-        <h2 className="font-display text-sm font-semibold text-foreground mb-3">Preis-Chart (60 Tage)</h2>
-        <PriceChart symbol={symbol} />
+      {/* Main Content: Chart + Trade Panel */}
+      <div className="grid grid-cols-1 xl:grid-cols-[1fr_340px] gap-6">
+        {/* Left: Chart */}
+        <div className="card-elevated rounded-xl border border-border/50 p-4">
+          <h2 className="font-display text-sm font-semibold text-foreground mb-3">
+            Candlestick-Chart mit CROC-Overlay
+          </h2>
+          <TradingViewChart
+            symbol={symbol}
+            entryPrice={chartOverlay ? Number(chartOverlay.entry_price) : undefined}
+            stopLoss={chartOverlay?.stop_loss ? Number(chartOverlay.stop_loss) : undefined}
+            takeProfit1={chartOverlay?.take_profit_1 ? Number(chartOverlay.take_profit_1) : undefined}
+            takeProfit2={chartOverlay?.take_profit_2 ? Number(chartOverlay.take_profit_2) : undefined}
+            takeProfit3={chartOverlay?.take_profit_3 ? Number(chartOverlay.take_profit_3) : undefined}
+          />
+        </div>
+
+        {/* Right: Trade Action Panel */}
+        <div>
+          <TradeActionPanel
+            symbol={symbol}
+            currentPrice={currentPrice}
+            onTradeExecuted={handleTradeExecuted}
+          />
+        </div>
       </div>
 
       {/* Lochstreifen */}
