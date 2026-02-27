@@ -9,7 +9,7 @@ import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { Textarea } from "@/components/ui/textarea";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
-import { CheckCircle2, XCircle, TrendingUp, TrendingDown, Loader2, ShieldCheck, ClipboardList } from "lucide-react";
+import { CheckCircle2, XCircle, TrendingUp, TrendingDown, Loader2, ShieldCheck, ClipboardList, Shield } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 
@@ -34,6 +34,7 @@ export default function TradeActionPanel({ symbol, currentPrice, onTradeExecuted
   const [tp1, setTp1] = useState("");
   const [tp2, setTp2] = useState("");
   const [tp3, setTp3] = useState("");
+  const [trailingStopPct, setTrailingStopPct] = useState("3.0");
   const [notes, setNotes] = useState("");
   const [isExecuting, setIsExecuting] = useState(false);
   const [isCheckingRules, setIsCheckingRules] = useState(false);
@@ -82,6 +83,7 @@ export default function TradeActionPanel({ symbol, currentPrice, onTradeExecuted
       if (d.take_profit_1) setTp1(String(Number(d.take_profit_1).toFixed(2)));
       if (d.take_profit_2) setTp2(String(Number(d.take_profit_2).toFixed(2)));
       if (d.take_profit_3) setTp3(String(Number(d.take_profit_3).toFixed(2)));
+      if (d.trailing_stop_percent) setTrailingStopPct(String(Number(d.trailing_stop_percent).toFixed(1)));
     }
   }, [latestDecision.data]);
 
@@ -122,9 +124,10 @@ export default function TradeActionPanel({ symbol, currentPrice, onTradeExecuted
           quantity,
           entry_price: entryPrice,
           stop_loss: stopLoss ? Number(stopLoss) : null,
-          tp1: tp1 ? Number(tp1) : null,
-          tp2: tp2 ? Number(tp2) : null,
-          tp3: tp3 ? Number(tp3) : null,
+          take_profit_1: tp1 ? Number(tp1) : null,
+          take_profit_2: tp2 ? Number(tp2) : null,
+          take_profit_3: tp3 ? Number(tp3) : null,
+          trailing_stop_percent: trailingStopPct ? Number(trailingStopPct) : 3.0,
           trigger_source: "MANUAL",
           decision_id: latestDecision.data?.decision_id || null,
           notes: notes || null,
@@ -132,12 +135,12 @@ export default function TradeActionPanel({ symbol, currentPrice, onTradeExecuted
       });
 
       if (error) throw error;
-      if (data?.success) {
+      if (data?.status === "OPENED") {
         toast.success(`${direction} Position eröffnet: ${quantity}x ${symbol} @ $${entryPrice.toFixed(2)}`);
         activePosition.refetch();
         onTradeExecuted?.();
       } else {
-        toast.error(data?.error || "Trade fehlgeschlagen");
+        toast.error(data?.reason || data?.error || "Trade fehlgeschlagen");
       }
     } catch (err: any) {
       toast.error("Trade-Fehler: " + err.message);
@@ -160,14 +163,14 @@ export default function TradeActionPanel({ symbol, currentPrice, onTradeExecuted
       });
 
       if (error) throw error;
-      if (data?.success) {
+      if (data?.status === "CLOSED" || data?.status === "STOPPED_OUT" || data?.status === "TP_HIT") {
         toast.success(
           `Position geschlossen: P&L ${data.pnl_amount >= 0 ? "+" : ""}$${data.pnl_amount} (${data.pnl_percent >= 0 ? "+" : ""}${data.pnl_percent}%)`
         );
         activePosition.refetch();
         onTradeExecuted?.();
       } else {
-        toast.error(data?.error || "Schließen fehlgeschlagen");
+        toast.error(data?.reason || data?.error || "Schließen fehlgeschlagen");
       }
     } catch (err: any) {
       toast.error("Fehler: " + err.message);
@@ -207,6 +210,23 @@ export default function TradeActionPanel({ symbol, currentPrice, onTradeExecuted
                     {Number(pos.pnl_percent) >= 0 ? "+" : ""}
                     {Number(pos.pnl_percent || 0).toFixed(2)}%)
                   </span>
+                </div>
+                {/* Trailing Stop Info */}
+                <div className="flex items-center gap-3 text-xs text-muted-foreground">
+                  {pos.stop_loss && (
+                    <span>SL: ${Number(pos.stop_loss).toFixed(2)}</span>
+                  )}
+                  {pos.trailing_stop_price ? (
+                    <span className="flex items-center gap-1">
+                      <Shield className="h-3 w-3 text-yellow-400" />
+                      Trailing: ${Number(pos.trailing_stop_price).toFixed(2)} ({Number(pos.trailing_stop_percent || 3).toFixed(1)}%)
+                      {pos.trailing_stop_activated && <Badge variant="outline" className="text-[10px] px-1 py-0 h-4">aktiv</Badge>}
+                    </span>
+                  ) : pos.trailing_stop_percent ? (
+                    <span className="text-muted-foreground/60">
+                      Trailing: {Number(pos.trailing_stop_percent).toFixed(1)}% (noch nicht aktiv)
+                    </span>
+                  ) : null}
                 </div>
               </div>
               <AlertDialog>
@@ -363,6 +383,29 @@ export default function TradeActionPanel({ symbol, currentPrice, onTradeExecuted
             </div>
           </div>
 
+          {/* Trailing Stop */}
+          <div className="space-y-1">
+            <Label className="text-xs text-muted-foreground flex items-center gap-1">
+              <Shield className="h-3 w-3" /> Trailing Stop (%)
+            </Label>
+            <Input
+              type="number"
+              step="0.5"
+              min="1"
+              max="10"
+              value={trailingStopPct}
+              onChange={(e) => setTrailingStopPct(e.target.value)}
+              placeholder="3.0"
+              className="h-8 text-sm"
+            />
+            <p className="text-xs text-muted-foreground">
+              Trailing-Stop aktiviert nach +1% Kursgewinn. Aktuelle Empfehlung:{" "}
+              {latestDecision.data?.trailing_stop_percent
+                ? `${Number(latestDecision.data.trailing_stop_percent).toFixed(1)}%`
+                : "3.0%"}
+            </p>
+          </div>
+
           <Separator />
 
           {/* Risk Summary */}
@@ -477,6 +520,11 @@ export default function TradeActionPanel({ symbol, currentPrice, onTradeExecuted
                 {latestDecision.data.action_type} · Konfidenz: {Number(latestDecision.data.confidence_score)}% ·{" "}
                 {new Date(latestDecision.data.decision_timestamp).toLocaleString("de-DE")}
               </p>
+              {latestDecision.data.trailing_stop_percent && (
+                <p className="text-yellow-400/80">
+                  Trailing Stop: {Number(latestDecision.data.trailing_stop_percent).toFixed(1)}%
+                </p>
+              )}
               <p className="mt-1 line-clamp-2">{latestDecision.data.reasoning}</p>
             </div>
           )}

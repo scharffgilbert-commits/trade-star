@@ -95,7 +95,7 @@ export default function RunPage() {
   // AI single-symbol state
   const [aiSymbol, setAiSymbol] = useState("AAPL");
   const [aiStatus, setAiStatus] = useState<RunStatus>("idle");
-  const [aiResult, setAiResult] = useState<string>("");
+  const [aiResult, setAiResult] = useState<any>(null);
 
   // Pipeline progress hook
   const {
@@ -228,17 +228,18 @@ export default function RunPage() {
 
   const runAiAnalysis = async () => {
     setAiStatus("running");
-    setAiResult("");
+    setAiResult(null);
     try {
       const { data, error } = await supabase.functions.invoke("ai-analysis", {
         body: { symbol: aiSymbol, date: new Date().toISOString().slice(0, 10) },
       });
       if (error) throw error;
       setAiStatus("success");
-      setAiResult(JSON.stringify(data, null, 2));
+      setAiResult(data);
+      queryClient.invalidateQueries({ queryKey: ["dashboard-cards"] });
     } catch (err: any) {
       setAiStatus("error");
-      setAiResult(err.message ?? "Fehler");
+      setAiResult({ error: err.message ?? "Fehler" });
     }
   };
 
@@ -505,10 +506,121 @@ export default function RunPage() {
           </Button>
           {aiStatus !== "running" && statusIcon(aiStatus)}
         </div>
-        {aiResult && (
-          <pre className="text-xs font-mono p-3 rounded-lg bg-muted/50 max-h-40 overflow-auto text-muted-foreground">
-            {aiResult}
-          </pre>
+        {aiResult && !aiResult.error && (
+          <div className="rounded-xl border border-border/50 bg-muted/30 p-4 space-y-4">
+            {/* Header: Symbol + Action + Confidence */}
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <span className="font-mono text-lg font-bold text-foreground">{aiResult.symbol}</span>
+                <Badge
+                  variant="outline"
+                  className={`text-xs font-bold px-2.5 py-0.5 ${getActionBadgeClass(aiResult.action_type)}`}
+                >
+                  {aiResult.action_type} {getGrade(aiResult.confidence_score)}
+                </Badge>
+              </div>
+              <div className="text-right">
+                <span className="font-mono text-2xl font-bold text-foreground">
+                  {aiResult.confidence_score}%
+                </span>
+                <span className="block text-[10px] text-muted-foreground">Konfidenz</span>
+              </div>
+            </div>
+
+            {/* Reasoning */}
+            {aiResult.reasoning && (
+              <p className="text-sm text-muted-foreground leading-relaxed border-l-2 border-primary/30 pl-3">
+                {aiResult.reasoning}
+              </p>
+            )}
+
+            {/* Price Levels */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+              <div className="rounded-lg bg-background/50 border border-border/30 p-2.5">
+                <span className="block text-[10px] text-muted-foreground">Kurs</span>
+                <span className="font-mono text-sm font-semibold text-foreground">
+                  ${aiResult.latest_price?.toFixed(2) ?? "—"}
+                </span>
+              </div>
+              <div className="rounded-lg bg-background/50 border border-border/30 p-2.5">
+                <span className="block text-[10px] text-muted-foreground">Einstieg</span>
+                <span className="font-mono text-sm font-semibold text-foreground">
+                  {aiResult.entry_price ? `$${aiResult.entry_price.toFixed(2)}` : "—"}
+                </span>
+              </div>
+              <div className="rounded-lg bg-background/50 border border-bearish/20 p-2.5">
+                <span className="block text-[10px] text-bearish">Stop-Loss</span>
+                <span className="font-mono text-sm font-semibold text-bearish">
+                  {aiResult.stop_loss ? `$${aiResult.stop_loss.toFixed(2)}` : "—"}
+                </span>
+              </div>
+              <div className="rounded-lg bg-background/50 border border-bullish/20 p-2.5">
+                <span className="block text-[10px] text-bullish">Take-Profit</span>
+                <span className="font-mono text-sm font-semibold text-bullish">
+                  {aiResult.take_profit_1 ? `$${aiResult.take_profit_1.toFixed(2)}` : "—"}
+                </span>
+              </div>
+            </div>
+
+            {/* 4-Strand Scores */}
+            {aiResult.strands && (
+              <div className="space-y-2">
+                <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">4-Strang Analyse</span>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                  {[
+                    { label: "S1 Technisch", data: aiResult.strands.s1 },
+                    { label: "S2 Ichimoku", data: aiResult.strands.s2 },
+                    { label: "S3 Volume", data: aiResult.strands.s3 },
+                    { label: "S4 CROC/ICE", data: aiResult.strands.s4 },
+                  ].map(({ label, data }) => {
+                    const dominant = data.long > data.short ? "long" : data.short > data.long ? "short" : "neutral";
+                    const score = Math.max(data.long, data.short);
+                    return (
+                      <div key={label} className="rounded-lg bg-background/50 border border-border/30 p-2">
+                        <span className="block text-[10px] text-muted-foreground">{label}</span>
+                        <div className="flex items-center justify-between mt-1">
+                          <span className={`font-mono text-sm font-bold ${
+                            dominant === "long" ? "text-bullish" : dominant === "short" ? "text-bearish" : "text-muted-foreground"
+                          }`}>
+                            {score}
+                          </span>
+                          <span className={`text-[10px] font-semibold ${
+                            dominant === "long" ? "text-bullish" : dominant === "short" ? "text-bearish" : "text-muted-foreground"
+                          }`}>
+                            {dominant === "long" ? "▲ LONG" : dominant === "short" ? "▼ SHORT" : "— NEUTRAL"}
+                          </span>
+                        </div>
+                        {/* Mini bar */}
+                        <div className="flex gap-0.5 mt-1.5 h-1.5 rounded-full overflow-hidden bg-muted">
+                          <div
+                            className="bg-bullish rounded-l-full transition-all"
+                            style={{ width: `${data.long}%` }}
+                          />
+                          <div
+                            className="bg-bearish rounded-r-full transition-all ml-auto"
+                            style={{ width: `${data.short}%` }}
+                          />
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* Active signals count */}
+            {aiResult.active_signals > 0 && (
+              <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                <Activity className="h-3 w-3 text-primary" />
+                <span>{aiResult.active_signals} aktive ICE-Signale</span>
+              </div>
+            )}
+          </div>
+        )}
+        {aiResult?.error && (
+          <div className="text-xs font-mono p-3 rounded-lg bg-bearish/10 text-bearish border border-bearish/20">
+            {aiResult.error}
+          </div>
         )}
       </div>
 

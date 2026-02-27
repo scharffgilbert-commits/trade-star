@@ -51,7 +51,7 @@ export default function SymbolDetail() {
     queryFn: async () => {
       const { data, error } = await supabase
         .from("trading_decisions")
-        .select("entry_price, stop_loss, take_profit_1, take_profit_2, take_profit_3, action_type, confidence_score, decision_timestamp")
+        .select("entry_price, stop_loss, take_profit_1, take_profit_2, take_profit_3, action_type, confidence_score, decision_timestamp, trailing_stop_percent")
         .eq("symbol", symbol!)
         .order("decision_timestamp", { ascending: false })
         .limit(1)
@@ -68,7 +68,7 @@ export default function SymbolDetail() {
     queryFn: async () => {
       const { data, error } = await supabase
         .from("demo_positions")
-        .select("entry_price, stop_loss, take_profit_1, take_profit_2, take_profit_3")
+        .select("entry_price, stop_loss, take_profit_1, take_profit_2, take_profit_3, trailing_stop_price, trailing_stop_percent, trailing_stop_activated")
         .eq("symbol", symbol!)
         .in("position_status", ["OPEN"])
         .maybeSingle();
@@ -170,6 +170,7 @@ export default function SymbolDetail() {
             takeProfit1={chartOverlay?.take_profit_1 ? Number(chartOverlay.take_profit_1) : undefined}
             takeProfit2={chartOverlay?.take_profit_2 ? Number(chartOverlay.take_profit_2) : undefined}
             takeProfit3={chartOverlay?.take_profit_3 ? Number(chartOverlay.take_profit_3) : undefined}
+            trailingStopPrice={activePosition.data?.trailing_stop_price ? Number(activePosition.data.trailing_stop_price) : undefined}
           />
         </div>
 
