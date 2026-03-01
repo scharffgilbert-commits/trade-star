@@ -17,6 +17,19 @@ export interface DetectedSetup {
   created_at: string;
 }
 
+interface RawSetup {
+  id: number;
+  symbol: string;
+  setup_name: string;
+  direction: string;
+  confidence: number | null;
+  detection_date: string;
+  is_active: boolean;
+  entry_price: number | null;
+  notes: string | null;
+  created_at: string;
+}
+
 export function useDetectedSetups(symbol?: string, activeOnly: boolean = false) {
   const { data, isLoading, error } = useQuery({
     queryKey: ["detected-setups", symbol ?? "all", activeOnly],
@@ -38,7 +51,21 @@ export function useDetectedSetups(symbol?: string, activeOnly: boolean = false) 
 
       const { data, error } = await query;
       if (error) throw error;
-      return data as DetectedSetup[];
+      return ((data as RawSetup[]) ?? []).map((d) => ({
+        id: d.id,
+        symbol: d.symbol,
+        setup_type: d.setup_name,
+        direction: d.direction,
+        confidence: d.confidence ?? 0,
+        detection_date: d.detection_date,
+        is_active: d.is_active,
+        entry_price: d.entry_price,
+        stop_loss_price: null,
+        take_profit_price: null,
+        risk_reward_ratio: null,
+        notes: d.notes,
+        created_at: d.created_at ?? "",
+      })) as DetectedSetup[];
     },
   });
 

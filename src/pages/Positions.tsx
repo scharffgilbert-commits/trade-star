@@ -84,7 +84,7 @@ const rowBg = (pnl: number | null | undefined) => {
 type SortKey = string;
 type SortDir = "asc" | "desc";
 
-function sortPositions<T extends Record<string, unknown>>(
+function sortPositions<T extends Record<string, any>>(
   data: T[],
   key: SortKey,
   dir: SortDir

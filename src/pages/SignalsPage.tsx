@@ -589,7 +589,7 @@ export default function SignalsPage() {
                 </tr>
               )}
               {filtered.map((d, i) => {
-                const rowKey = d.decision_id ?? `row-${i}`;
+                const rowKey = String(d.decision_id ?? `row-${i}`);
                 const isExpanded = expandedRows.has(rowKey);
                 const grade = confidenceToGrade(d.confidence_score);
 

@@ -62,7 +62,8 @@ export default function TradeActionPanel({ symbol, currentPrice, onTradeExecuted
   const activePosition = useQuery({
     queryKey: ["active-position", symbol],
     queryFn: async () => {
-      const { data, error } = await supabase
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data, error } = await (supabase as any)
         .from("demo_positions")
         .select("*")
         .eq("symbol", symbol)
@@ -70,7 +71,7 @@ export default function TradeActionPanel({ symbol, currentPrice, onTradeExecuted
         .limit(1)
         .maybeSingle();
       if (error) throw error;
-      return data;
+      return data as any;
     },
   });
 
@@ -97,7 +98,8 @@ export default function TradeActionPanel({ symbol, currentPrice, onTradeExecuted
   const checkRules = async () => {
     setIsCheckingRules(true);
     try {
-      const { data, error } = await supabase.rpc("check_trading_rules", {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data, error } = await (supabase as any).rpc("check_trading_rules", {
         p_account_id: accountId,
         p_symbol: symbol,
         p_direction: direction,
