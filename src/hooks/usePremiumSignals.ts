@@ -37,7 +37,11 @@ export function usePremiumSignals(symbol?: string, days: number = 90) {
 
       const { data, error } = await query;
       if (error) throw error;
-      return data as PremiumSignal[];
+      // Map DB column signal_strength to interface signal_score
+      return ((data ?? []) as any[]).map((d) => ({
+        ...d,
+        signal_score: d.signal_strength ?? 50,
+      })) as PremiumSignal[];
     },
   });
 
