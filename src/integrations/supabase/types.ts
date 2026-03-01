@@ -3394,6 +3394,16 @@ export type Database = {
         }
         Returns: undefined
       }
+      recalculate_all_s4_scores: {
+        Args: never
+        Returns: {
+          new_confidence: number
+          new_long_score: number
+          new_short_score: number
+          updated_date: string
+          updated_symbol: string
+        }[]
+      }
       run_historical_backtest: {
         Args: {
           p_account_id?: number
