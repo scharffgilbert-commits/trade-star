@@ -1,4 +1,6 @@
 import { useState, useMemo } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { supabase } from "@/integrations/supabase/client";
 import { motion } from "framer-motion";
 import {
   Briefcase,
@@ -101,7 +103,7 @@ function sortPositions<T extends Record<string, any>>(
   });
 }
 
-const ALL_SYMBOLS = ["AAPL", "MSFT", "AMZN", "JPM", "V", "SAP", "SIEGY", "BMWYY"];
+// ALL_SYMBOLS is now loaded dynamically in AutoTradeConfigSection
 
 // ────────────────────────────────────────────
 // Column header with sort
@@ -574,10 +576,25 @@ function PendingPositionsTab() {
 function AutoTradeConfigSection() {
   const { accountId, isReadOnly } = useAccountContext();
   const { config, isLoading, updateConfig } = useAutoTradeConfig(accountId);
+  const [open, setOpen] = useState(false);
+
+  // Load all active symbols dynamically
+  const { data: allSymbols } = useQuery({
+    queryKey: ["all-active-symbols"],
+    queryFn: async () => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data, error } = await (supabase as any)
+        .from("symbols_master")
+        .select("symbol")
+        .eq("active", true)
+        .order("symbol");
+      if (error) throw error;
+      return (data as { symbol: string }[]).map((d) => d.symbol);
+    },
+  });
 
   // Hide auto-trade config for read-only accounts (backtest)
   if (isReadOnly) return null;
-  const [open, setOpen] = useState(false);
 
   if (isLoading || !config) {
     return <Skeleton className="h-12 rounded-lg" />;
@@ -661,7 +678,7 @@ function AutoTradeConfigSection() {
           <div>
             <Label className="text-sm font-medium text-foreground mb-3 block">Erlaubte Symbole</Label>
             <div className="flex flex-wrap gap-3">
-              {ALL_SYMBOLS.map((s) => (
+              {(allSymbols ?? []).map((s) => (
                 <label key={s} className="flex items-center gap-2 cursor-pointer">
                   <Checkbox
                     checked={(config.allowed_symbols ?? []).includes(s)}
