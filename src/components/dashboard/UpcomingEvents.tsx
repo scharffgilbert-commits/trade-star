@@ -154,7 +154,7 @@ export default function UpcomingEvents() {
                         : "border-muted text-muted-foreground"
                   )}
                 >
-                  {event.confidence.toFixed(0)}%
+                  {(event.confidence ?? 0).toFixed(0)}%
                 </Badge>
                 <div className="flex items-center gap-0.5 text-[9px] text-muted-foreground mt-0.5">
                   <Clock className="h-2.5 w-2.5" />
