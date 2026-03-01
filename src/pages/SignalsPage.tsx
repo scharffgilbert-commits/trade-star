@@ -5,7 +5,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Slider } from "@/components/ui/slider";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { ChevronRight, ChevronDown, TrendingUp, Filter, Target, ShieldAlert, Trophy } from "lucide-react";
+import { ChevronRight, ChevronDown, TrendingUp, Filter, Target, ShieldAlert, Trophy, CalendarDays, List } from "lucide-react";
 
 // --- Helpers ---
 
@@ -399,11 +399,13 @@ function ExpandedRowDetail({ d }: { d: any }) {
 // --- Main Page ---
 
 export default function SignalsPage() {
+  const [viewMode, setViewMode] = useState<"list" | "daily">("daily");
   const [symbolFilter, setSymbolFilter] = useState("ALL");
   const [actionFilter, setActionFilter] = useState("ALL");
   const [dateRange, setDateRange] = useState<DateRange>("all");
   const [minConfidence, setMinConfidence] = useState(0);
   const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set());
+  const [expandedDays, setExpandedDays] = useState<Set<string>>(new Set());
 
   // Fetch trading decisions
   const decisionsQuery = useQuery({
@@ -415,7 +417,7 @@ export default function SignalsPage() {
           "decision_id, symbol, decision_timestamp, action_type, confidence_score, reasoning, entry_price, stop_loss, take_profit_1, take_profit_2, take_profit_3, croc_status, ice_signals_active, strand1_signal, strand2_signal, strand3_signal, strand4_signal, strand1_long_score, strand1_short_score, strand2_confidence, strand3_long_score, strand3_short_score, strand4_long_score, strand4_short_score, created_at"
         )
         .order("decision_timestamp", { ascending: false })
-        .limit(500);
+        .limit(1000);
       if (error) throw error;
       return data;
     },
@@ -452,6 +454,34 @@ export default function SignalsPage() {
       return true;
     });
   }, [allDecisions, symbolFilter, actionFilter, dateRange, minConfidence]);
+
+  // Group filtered decisions by day for daily view
+  const dailyGroups = useMemo(() => {
+    const groups: Record<string, any[]> = {};
+    for (const d of filtered) {
+      const day = d.decision_timestamp
+        ? new Date(d.decision_timestamp).toISOString().slice(0, 10)
+        : "unknown";
+      if (!groups[day]) groups[day] = [];
+      groups[day].push(d);
+    }
+    // Sort days descending
+    return Object.entries(groups)
+      .sort(([a], [b]) => b.localeCompare(a))
+      .map(([date, decisions]) => ({
+        date,
+        decisions: decisions.sort((a: any, b: any) => (b.confidence_score ?? 0) - (a.confidence_score ?? 0)),
+      }));
+  }, [filtered]);
+
+  const toggleDay = (day: string) => {
+    setExpandedDays((prev) => {
+      const next = new Set(prev);
+      if (next.has(day)) next.delete(day);
+      else next.add(day);
+      return next;
+    });
+  };
 
   const toggleRow = (key: string) => {
     setExpandedRows((prev) => {
@@ -559,55 +589,179 @@ export default function SignalsPage() {
             />
           </div>
         </div>
-      </div>
 
-      {/* Table */}
-      <div className="card-elevated rounded-xl border border-border/50 overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full text-xs">
-            <thead>
-              <tr className="text-muted-foreground border-b border-border/30 bg-muted/20">
-                <th className="w-8 p-3" />
-                <th className="text-left p-3 font-medium">Symbol</th>
-                <th className="text-left p-3 font-medium">Datum</th>
-                <th className="text-left p-3 font-medium">Aktion</th>
-                <th className="text-center p-3 font-medium">Grade</th>
-                <th className="text-right p-3 font-medium">Konfidenz</th>
-                <th className="text-right p-3 font-medium">Entry</th>
-                <th className="text-right p-3 font-medium">Stop</th>
-                <th className="text-right p-3 font-medium">TP1</th>
-                <th className="text-left p-3 font-medium">CROC</th>
-                <th className="text-left p-3 font-medium">Str\u00E4nge</th>
-              </tr>
-            </thead>
-            <tbody>
-              {filtered.length === 0 && (
-                <tr>
-                  <td colSpan={11} className="text-center py-12 text-sm text-muted-foreground">
-                    Keine Signale gefunden.
-                  </td>
-                </tr>
-              )}
-              {filtered.map((d, i) => {
-                const rowKey = String(d.decision_id ?? `row-${i}`);
-                const isExpanded = expandedRows.has(rowKey);
-                const grade = confidenceToGrade(d.confidence_score);
-
-                return (
-                  <SignalRow
-                    key={rowKey}
-                    d={d}
-                    rowKey={rowKey}
-                    grade={grade}
-                    isExpanded={isExpanded}
-                    onToggle={toggleRow}
-                  />
-                );
-              })}
-            </tbody>
-          </table>
+        {/* View Mode Toggle */}
+        <div className="flex gap-1">
+          <Button
+            variant={viewMode === "daily" ? "default" : "outline"}
+            size="sm"
+            className="h-9 text-xs px-2.5 gap-1.5"
+            onClick={() => setViewMode("daily")}
+          >
+            <CalendarDays className="h-3.5 w-3.5" /> Tagesansicht
+          </Button>
+          <Button
+            variant={viewMode === "list" ? "default" : "outline"}
+            size="sm"
+            className="h-9 text-xs px-2.5 gap-1.5"
+            onClick={() => setViewMode("list")}
+          >
+            <List className="h-3.5 w-3.5" /> Liste
+          </Button>
         </div>
       </div>
+
+      {/* Daily View */}
+      {viewMode === "daily" && (
+        <div className="space-y-3">
+          {dailyGroups.length === 0 && (
+            <div className="card-elevated rounded-xl border border-border/50 p-8 text-center text-sm text-muted-foreground">
+              Keine Analysen gefunden.
+            </div>
+          )}
+          {dailyGroups.map(({ date, decisions }) => {
+            const isDayExpanded = expandedDays.has(date);
+            const longCount = decisions.filter((d: any) => d.action_type === "LONG").length;
+            const shortCount = decisions.filter((d: any) => d.action_type === "SHORT").length;
+            const cashCount = decisions.filter((d: any) => d.action_type === "CASH").length;
+            const avgConf = decisions.reduce((s: number, d: any) => s + (d.confidence_score ?? 0), 0) / decisions.length;
+            const formattedDate = date !== "unknown"
+              ? new Date(date + "T00:00:00").toLocaleDateString("de-DE", { weekday: "long", day: "2-digit", month: "long", year: "numeric" })
+              : "Unbekannt";
+
+            return (
+              <div key={date} className="card-elevated rounded-xl border border-border/50 overflow-hidden">
+                {/* Day Header */}
+                <button
+                  onClick={() => toggleDay(date)}
+                  className="w-full flex items-center justify-between p-4 hover:bg-muted/20 transition-colors"
+                >
+                  <div className="flex items-center gap-3">
+                    {isDayExpanded ? (
+                      <ChevronDown className="h-4 w-4 text-muted-foreground" />
+                    ) : (
+                      <ChevronRight className="h-4 w-4 text-muted-foreground" />
+                    )}
+                    <CalendarDays className="h-4 w-4 text-primary" />
+                    <span className="font-display text-sm font-semibold text-foreground">{formattedDate}</span>
+                    <span className="text-xs text-muted-foreground">({decisions.length} Symbole)</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {longCount > 0 && (
+                      <Badge variant="outline" className="text-[10px] bg-bullish/15 text-bullish border-bullish/30">
+                        {longCount} LONG
+                      </Badge>
+                    )}
+                    {shortCount > 0 && (
+                      <Badge variant="outline" className="text-[10px] bg-bearish/15 text-bearish border-bearish/30">
+                        {shortCount} SHORT
+                      </Badge>
+                    )}
+                    {cashCount > 0 && (
+                      <Badge variant="outline" className="text-[10px] bg-neutral/15 text-neutral border-neutral/30">
+                        {cashCount} CASH
+                      </Badge>
+                    )}
+                    <span className="text-xs font-mono text-muted-foreground ml-2">
+                      ⌀ {avgConf.toFixed(0)}%
+                    </span>
+                  </div>
+                </button>
+
+                {/* Expanded Day Content */}
+                {isDayExpanded && (
+                  <div className="border-t border-border/30">
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-xs">
+                        <thead>
+                          <tr className="text-muted-foreground border-b border-border/30 bg-muted/20">
+                            <th className="w-8 p-3" />
+                            <th className="text-left p-3 font-medium">Symbol</th>
+                            <th className="text-left p-3 font-medium">Aktion</th>
+                            <th className="text-center p-3 font-medium">Grade</th>
+                            <th className="text-right p-3 font-medium">Konfidenz</th>
+                            <th className="text-right p-3 font-medium">Entry</th>
+                            <th className="text-right p-3 font-medium">Stop</th>
+                            <th className="text-right p-3 font-medium">TP1</th>
+                            <th className="text-left p-3 font-medium">CROC</th>
+                            <th className="text-left p-3 font-medium">Stränge</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {decisions.map((d: any, i: number) => {
+                            const rowKey = String(d.decision_id ?? `day-${date}-${i}`);
+                            const isExpanded = expandedRows.has(rowKey);
+                            const grade = confidenceToGrade(d.confidence_score);
+                            return (
+                              <SignalRow
+                                key={rowKey}
+                                d={d}
+                                rowKey={rowKey}
+                                grade={grade}
+                                isExpanded={isExpanded}
+                                onToggle={toggleRow}
+                              />
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* List View (original table) */}
+      {viewMode === "list" && (
+        <div className="card-elevated rounded-xl border border-border/50 overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="text-muted-foreground border-b border-border/30 bg-muted/20">
+                  <th className="w-8 p-3" />
+                  <th className="text-left p-3 font-medium">Symbol</th>
+                  <th className="text-left p-3 font-medium">Datum</th>
+                  <th className="text-left p-3 font-medium">Aktion</th>
+                  <th className="text-center p-3 font-medium">Grade</th>
+                  <th className="text-right p-3 font-medium">Konfidenz</th>
+                  <th className="text-right p-3 font-medium">Entry</th>
+                  <th className="text-right p-3 font-medium">Stop</th>
+                  <th className="text-right p-3 font-medium">TP1</th>
+                  <th className="text-left p-3 font-medium">CROC</th>
+                  <th className="text-left p-3 font-medium">Stränge</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filtered.length === 0 && (
+                  <tr>
+                    <td colSpan={11} className="text-center py-12 text-sm text-muted-foreground">
+                      Keine Signale gefunden.
+                    </td>
+                  </tr>
+                )}
+                {filtered.map((d, i) => {
+                  const rowKey = String(d.decision_id ?? `row-${i}`);
+                  const isExpanded = expandedRows.has(rowKey);
+                  const grade = confidenceToGrade(d.confidence_score);
+                  return (
+                    <SignalRow
+                      key={rowKey}
+                      d={d}
+                      rowKey={rowKey}
+                      grade={grade}
+                      isExpanded={isExpanded}
+                      onToggle={toggleRow}
+                    />
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
