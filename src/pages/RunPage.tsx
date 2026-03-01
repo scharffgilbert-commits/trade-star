@@ -21,7 +21,7 @@ import {
 
 type RunStatus = "idle" | "running" | "success" | "error";
 
-const SYMBOLS = ["AAPL", "MSFT", "AMZN", "JPM", "V", "SAP", "SIEGY", "BMWYY"];
+// Symbols are now loaded dynamically in the component
 
 interface TradingDecision {
   decision_id: number;
@@ -81,6 +81,22 @@ type SymbolStatus = "waiting" | "processing" | "done" | "error";
 export default function RunPage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+
+  // Load all active symbols dynamically
+  const { data: activeSymbols } = useQuery({
+    queryKey: ["all-active-symbols"],
+    queryFn: async () => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data, error } = await (supabase as any)
+        .from("symbols_master")
+        .select("symbol")
+        .eq("active", true)
+        .order("symbol");
+      if (error) throw error;
+      return (data as { symbol: string }[]).map((d) => d.symbol);
+    },
+  });
+  const SYMBOLS = activeSymbols ?? [];
 
   // Pipeline state
   const [pipelineStatus, setPipelineStatus] = useState<RunStatus>("idle");
