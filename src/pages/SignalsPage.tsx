@@ -437,10 +437,22 @@ export default function SignalsPage() {
   });
 
   const allDecisions = decisionsQuery.data ?? [];
-  const symbols = useMemo(
-    () => [...new Set(allDecisions.map((d) => d.symbol))].sort(),
-    [allDecisions]
-  );
+
+  // Load all active symbols from symbols_master
+  const { data: allActiveSymbols } = useQuery({
+    queryKey: ["all-active-symbols"],
+    queryFn: async () => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data, error } = await (supabase as any)
+        .from("symbols_master")
+        .select("symbol")
+        .eq("active", true)
+        .order("symbol");
+      if (error) throw error;
+      return (data as { symbol: string }[]).map((d) => d.symbol);
+    },
+  });
+  const symbols = allActiveSymbols ?? [];
 
   // Apply filters
   const filtered = useMemo(() => {
