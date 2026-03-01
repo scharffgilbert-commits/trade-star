@@ -10,6 +10,10 @@ import CrocLochstreifen from "@/components/symbol/CrocLochstreifen";
 import IceSignalsList from "@/components/symbol/IceSignalsList";
 import IndicatorsTable from "@/components/symbol/IndicatorsTable";
 import DecisionHistory from "@/components/symbol/DecisionHistory";
+import ActiveSetups from "@/components/symbol/ActiveSetups";
+import MarketRegimeChart from "@/components/symbol/MarketRegimeChart";
+import PremiumSignalTimeline from "@/components/symbol/PremiumSignalTimeline";
+import SymbolTradeHistory from "@/components/symbol/SymbolTradeHistory";
 import { cn } from "@/lib/utils";
 
 export default function SymbolDetail() {
@@ -187,14 +191,26 @@ export default function SymbolDetail() {
       {/* Lochstreifen */}
       <CrocLochstreifen symbol={symbol} />
 
+      {/* Active Setups + Market Regime */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <ActiveSetups symbol={symbol} />
+        <MarketRegimeChart symbol={symbol} />
+      </div>
+
       {/* ICE Signals + Indicators */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <IceSignalsList symbol={symbol} />
         <IndicatorsTable symbol={symbol} />
       </div>
 
+      {/* Premium Signal Timeline */}
+      <PremiumSignalTimeline symbol={symbol} />
+
       {/* Decision History */}
       <DecisionHistory symbol={symbol} />
+
+      {/* Symbol Trade History (both accounts) */}
+      <SymbolTradeHistory symbol={symbol} />
     </div>
   );
 }

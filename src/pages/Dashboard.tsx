@@ -5,6 +5,10 @@ import FilterButtons from "@/components/dashboard/FilterButtons";
 import SymbolCard from "@/components/dashboard/SymbolCard";
 import TopSignals from "@/components/dashboard/TopSignals";
 import PortfolioSummaryStrip from "@/components/dashboard/PortfolioSummaryStrip";
+import PerformanceComparison from "@/components/dashboard/PerformanceComparison";
+import MarketRegimeHeatmap from "@/components/dashboard/MarketRegimeHeatmap";
+import UpcomingEvents from "@/components/dashboard/UpcomingEvents";
+import ActiveSetupsWidget from "@/components/dashboard/ActiveSetupsWidget";
 import { Skeleton } from "@/components/ui/skeleton";
 
 export default function Dashboard() {
@@ -22,6 +26,16 @@ export default function Dashboard() {
       {/* Portfolio Summary Strip */}
       <PortfolioSummaryStrip />
 
+      {/* Performance Comparison: Live vs Backtest */}
+      <PerformanceComparison />
+
+      {/* Market Regime Heatmap + Upcoming Events */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <MarketRegimeHeatmap />
+        <UpcomingEvents />
+      </div>
+
+      {/* Main Content Grid */}
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
         {/* Symbol Cards */}
         <div className="lg:col-span-3">
@@ -44,6 +58,7 @@ export default function Dashboard() {
         {/* Sidebar */}
         <div className="space-y-4">
           <TopSignals data={cardData} />
+          <ActiveSetupsWidget />
         </div>
       </div>
     </div>

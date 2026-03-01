@@ -9,9 +9,10 @@ import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { Textarea } from "@/components/ui/textarea";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
-import { CheckCircle2, XCircle, TrendingUp, TrendingDown, Loader2, ShieldCheck, ClipboardList, Shield } from "lucide-react";
+import { CheckCircle2, XCircle, TrendingUp, TrendingDown, Loader2, ShieldCheck, ClipboardList, Shield, Lock } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
+import { useAccountContext } from "@/contexts/AccountContext";
 
 interface TradeActionPanelProps {
   symbol: string;
@@ -28,6 +29,7 @@ interface RuleResult {
 }
 
 export default function TradeActionPanel({ symbol, currentPrice, onTradeExecuted }: TradeActionPanelProps) {
+  const { accountId, isReadOnly } = useAccountContext();
   const [direction, setDirection] = useState<"LONG" | "SHORT">("LONG");
   const [quantity, setQuantity] = useState(10);
   const [stopLoss, setStopLoss] = useState("");
@@ -96,7 +98,7 @@ export default function TradeActionPanel({ symbol, currentPrice, onTradeExecuted
     setIsCheckingRules(true);
     try {
       const { data, error } = await supabase.rpc("check_trading_rules", {
-        p_account_id: 1,
+        p_account_id: accountId,
         p_symbol: symbol,
         p_direction: direction,
         p_quantity: quantity,
@@ -118,7 +120,7 @@ export default function TradeActionPanel({ symbol, currentPrice, onTradeExecuted
       const { data, error } = await supabase.functions.invoke("demo-trade-engine", {
         body: {
           action: "open",
-          account_id: 1,
+          account_id: accountId,
           symbol,
           direction,
           quantity,
@@ -181,6 +183,26 @@ export default function TradeActionPanel({ symbol, currentPrice, onTradeExecuted
 
   // Show active position banner
   const pos = activePosition.data;
+
+  // Read-only mode for backtest accounts
+  if (isReadOnly) {
+    return (
+      <Card>
+        <CardContent className="p-6">
+          <div className="flex flex-col items-center gap-3 text-center">
+            <Lock className="h-8 w-8 text-blue-400" />
+            <div>
+              <p className="font-medium text-foreground">Backtest-Modus</p>
+              <p className="text-sm text-muted-foreground">
+                Trading-Aktionen sind im Backtest-Depot deaktiviert.
+                Wechsle zum Live-Demo-Konto um Trades auszuführen.
+              </p>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+    );
+  }
 
   return (
     <div className="space-y-4">

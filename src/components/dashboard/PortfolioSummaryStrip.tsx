@@ -2,15 +2,18 @@ import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { Wallet, TrendingUp, BarChart3, Target, TrendingDown } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useAccountContext } from "@/contexts/AccountContext";
 
 export default function PortfolioSummaryStrip() {
+  const { accountId, accountInfo } = useAccountContext();
+
   const { data: account } = useQuery({
-    queryKey: ["demo-account-strip"],
+    queryKey: ["demo-account-strip", accountId],
     queryFn: async () => {
-      const { data, error } = await supabase
+      const { data, error } = await (supabase as any)
         .from("demo_accounts")
         .select("*")
-        .eq("id", 1)
+        .eq("id", accountId)
         .single();
       if (error) throw error;
       return data;
@@ -19,12 +22,12 @@ export default function PortfolioSummaryStrip() {
   });
 
   const { data: openCount } = useQuery({
-    queryKey: ["open-positions-count"],
+    queryKey: ["open-positions-count", accountId],
     queryFn: async () => {
-      const { count, error } = await supabase
+      const { count, error } = await (supabase as any)
         .from("demo_positions")
         .select("id", { count: "exact", head: true })
-        .eq("account_id", 1)
+        .eq("account_id", accountId)
         .eq("position_status", "OPEN");
       if (error) throw error;
       return count ?? 0;
@@ -45,8 +48,11 @@ export default function PortfolioSummaryStrip() {
   return (
     <div className="flex items-center gap-6 px-4 py-2 rounded-lg bg-card/50 border border-border/30 text-sm overflow-x-auto">
       <div className="flex items-center gap-1.5 whitespace-nowrap">
-        <Wallet className="h-3.5 w-3.5 text-primary" />
-        <span className="text-muted-foreground">Konto:</span>
+        <span
+          className="h-2 w-2 rounded-full shrink-0"
+          style={{ backgroundColor: accountInfo.color }}
+        />
+        <span className="text-muted-foreground">{accountInfo.label}:</span>
         <span className="font-mono font-semibold text-foreground">
           ${Number(account.current_balance).toLocaleString("en-US", { minimumFractionDigits: 0 })}
         </span>

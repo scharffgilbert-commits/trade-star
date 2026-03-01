@@ -1,6 +1,7 @@
 import { NavLink, useLocation } from "react-router-dom";
-import { LayoutDashboard, Play, History, Activity, TrendingUp, Briefcase, PieChart, Search } from "lucide-react";
+import { LayoutDashboard, Play, History, Activity, TrendingUp, Briefcase, PieChart, Search, FlaskConical } from "lucide-react";
 import NotificationBell from "@/components/layout/NotificationBell";
+import AccountSwitcher from "@/components/layout/AccountSwitcher";
 import type { Notification } from "@/hooks/useNotifications";
 
 interface AppSidebarProps {
@@ -13,6 +14,7 @@ const navItems = [
   { to: "/", icon: LayoutDashboard, label: "Dashboard" },
   { to: "/positions", icon: Briefcase, label: "Positionen" },
   { to: "/portfolio", icon: PieChart, label: "Portfolio" },
+  { to: "/backtest", icon: FlaskConical, label: "Backtest" },
   { to: "/signals", icon: History, label: "Signale" },
   { to: "/croc", icon: Activity, label: "CROC/ICE" },
   { to: "/run", icon: Play, label: "Analyse" },
@@ -28,7 +30,7 @@ export default function AppSidebar({ notifications = [], unreadCount = 0, onMark
         <div className="flex items-center gap-2">
           <TrendingUp className="h-5 w-5 text-primary shrink-0" />
           <span className="hidden md:block font-display text-sm font-bold text-foreground">
-            BörsenStar <span className="text-primary">V4</span>
+            BörsenStar <span className="text-primary">V6</span>
           </span>
         </div>
         <div className="hidden md:flex items-center gap-1">
@@ -61,8 +63,13 @@ export default function AppSidebar({ notifications = [], unreadCount = 0, onMark
         })}
       </nav>
 
-      {/* Footer: Shortcuts Hint */}
+      {/* Account Switcher */}
       <div className="hidden md:block p-3 border-t border-sidebar-border">
+        <AccountSwitcher compact />
+      </div>
+
+      {/* Footer: Shortcuts Hint */}
+      <div className="hidden md:block px-3 pb-3">
         <div className="flex items-center gap-2 text-[10px] text-muted-foreground">
           <Search className="h-3 w-3" />
           <span>⌘K Suche · ? Shortcuts</span>

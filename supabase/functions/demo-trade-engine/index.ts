@@ -20,6 +20,44 @@ interface AutoTradeConfig {
   allowed_directions: string[];
 }
 
+interface StrategyParams {
+  risk_per_trade_percent: number;
+  max_position_size: number;
+  max_open_positions: number;
+  min_confidence_threshold: number;
+  trailing_stop_default: number;
+  min_risk_reward_ratio: number;
+}
+
+async function loadStrategyConfig(supabase: any): Promise<StrategyParams> {
+  const keys = [
+    "risk_per_trade_percent",
+    "max_position_size",
+    "max_open_positions",
+    "min_confidence_threshold",
+    "trailing_stop_default",
+    "min_risk_reward_ratio",
+  ];
+  const { data: configs } = await supabase
+    .from("strategy_config")
+    .select("config_key, config_value")
+    .in("config_key", keys);
+
+  const get = (key: string, fallback: number): number => {
+    const entry = (configs ?? []).find((c: any) => c.config_key === key);
+    return entry?.config_value?.value ?? fallback;
+  };
+
+  return {
+    risk_per_trade_percent: get("risk_per_trade_percent", 2.0),
+    max_position_size: get("max_position_size", 20000),
+    max_open_positions: get("max_open_positions", 5),
+    min_confidence_threshold: get("min_confidence_threshold", 55),
+    trailing_stop_default: get("trailing_stop_default", 3.0),
+    min_risk_reward_ratio: get("min_risk_reward_ratio", 1.5),
+  };
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
@@ -46,6 +84,8 @@ Deno.serve(async (req) => {
         return await handleUpdateTrailing(supabase, body);
       case "update_prices":
         return await handleUpdatePrices(supabase);
+      case "check_pending":
+        return await handleCheckPending(supabase, body);
       case "reset":
         return await handleReset(supabase, body);
       default:
@@ -80,6 +120,9 @@ async function handleAutoTrade(supabase: any, body: any) {
   }
 
   const autoConfig = config as AutoTradeConfig;
+
+  // 1b. Load dynamic strategy parameters
+  const strategyParams = await loadStrategyConfig(supabase);
 
   // 2. Get account info
   const { data: account } = await supabase
@@ -137,8 +180,8 @@ async function handleAutoTrade(supabase: any, body: any) {
       continue;
     }
 
-    // Check trading rules
-    const ruleCheck = await checkTradingRules(supabase, accountId, account, decision);
+    // Check trading rules (with dynamic strategy params)
+    const ruleCheck = await checkTradingRules(supabase, accountId, account, decision, strategyParams);
     if (!ruleCheck.allPassed) {
       const failedRules = ruleCheck.results.filter((r: any) => !r.passed).map((r: any) => r.rule).join(", ");
       if (autoConfig.mode === "AUTO") {
@@ -149,8 +192,8 @@ async function handleAutoTrade(supabase: any, body: any) {
       continue;
     }
 
-    // Calculate position size (risk-based: risk 2% of account per trade)
-    const riskPercent = 2.0;
+    // Calculate position size (risk-based: dynamic % from strategy_config)
+    const riskPercent = strategyParams.risk_per_trade_percent;
     const riskAmount = account.current_balance * (riskPercent / 100);
     const entryPrice = Number(decision.entry_price);
     const stopLoss = Number(decision.stop_loss);
@@ -161,8 +204,8 @@ async function handleAutoTrade(supabase: any, body: any) {
       quantity = Math.max(1, Math.floor(riskAmount / priceDiff));
     }
 
-    // Cap at max position size ($20k default)
-    const maxPositionSize = 20000;
+    // Cap at max position size (dynamic from strategy_config)
+    const maxPositionSize = strategyParams.max_position_size;
     const positionValue = quantity * entryPrice;
     if (positionValue > maxPositionSize) {
       quantity = Math.floor(maxPositionSize / entryPrice);
@@ -179,52 +222,106 @@ async function handleAutoTrade(supabase: any, body: any) {
       continue;
     }
 
-    if (autoConfig.mode === "CONFIRM") {
-      // Create pending position for user confirmation
+    // V6.0: Determine entry_type and setup info from AI strand analysis
+    const { data: fusionAnalysis } = await supabase
+      .from("ai_strand_analyses")
+      .select("key_findings")
+      .eq("symbol", symbol)
+      .eq("analysis_date", today)
+      .eq("strand_type", "fusion")
+      .single();
+
+    const fusionFindings = fusionAnalysis?.key_findings ?? {};
+    const entryType = fusionFindings.entry_type || "MARKET";
+    const setupName = fusionFindings.setup_name || null;
+    const tradeStyle = fusionFindings.trade_style || "CTT";
+    const trailingStopType = fusionFindings.trailing_stop_type || "PERCENT";
+
+    // V6.0: If STOP_BUY/STOP_SELL, create PENDING position with trigger price
+    const isPendingOrder = entryType === "STOP_BUY" || entryType === "STOP_SELL";
+
+    // V6.0: Get detected setup details for stop levels
+    const { data: activeSetup } = await supabase
+      .from("detected_setups")
+      .select("stop_soft, stop_hard, profit_1, profit_2, profit_3, entry_price")
+      .eq("symbol", symbol)
+      .eq("is_active", true)
+      .eq("direction", direction)
+      .order("detection_date", { ascending: false })
+      .limit(1)
+      .single();
+
+    // Use setup stop levels if available, otherwise AI decision levels
+    const stopSoft = activeSetup?.stop_soft || stopLoss;
+    const stopHard = activeSetup?.stop_hard || null;
+    const tp1 = activeSetup?.profit_1 || decision.take_profit_1;
+    const tp2 = activeSetup?.profit_2 || decision.take_profit_2;
+    const tp3 = activeSetup?.profit_3 || decision.take_profit_3;
+
+    // V6.0: For pending orders, use setup entry price as trigger
+    const pendingEntryPrice = isPendingOrder ? (activeSetup?.entry_price || entryPrice) : null;
+
+    if (autoConfig.mode === "CONFIRM" || isPendingOrder) {
+      // Create pending position (for user confirmation OR stop-buy/sell orders)
+      const posStatus = isPendingOrder ? "PENDING" : "PENDING";
       const { error } = await supabase.from("demo_positions").insert({
         account_id: accountId,
         symbol,
         decision_id: decision.decision_id,
         position_type: direction,
-        position_status: "PENDING",
+        position_status: posStatus,
         quantity,
-        entry_price: entryPrice,
+        entry_price: isPendingOrder ? pendingEntryPrice : entryPrice,
         current_price: entryPrice,
-        stop_loss: stopLoss,
-        take_profit_1: decision.take_profit_1,
-        take_profit_2: decision.take_profit_2,
-        take_profit_3: decision.take_profit_3,
-        trailing_stop_percent: decision.trailing_stop_percent ?? 3.0,
+        stop_loss: stopSoft,
+        stop_loss_soft: stopSoft,
+        stop_loss_hard: stopHard,
+        take_profit_1: tp1,
+        take_profit_2: tp2,
+        take_profit_3: tp3,
+        trailing_stop_percent: decision.trailing_stop_percent ?? strategyParams.trailing_stop_default,
         trailing_stop_price: null,
         trailing_stop_activated: false,
         trailing_stop_highest: direction === "LONG" ? entryPrice : null,
         trailing_stop_lowest: direction === "SHORT" ? entryPrice : null,
         trigger_source: "AUTO_SIGNAL",
         notes: `Auto-Signal: ${decision.reasoning?.slice(0, 200)}`,
+        entry_type: entryType,
+        pending_entry_price: pendingEntryPrice,
+        setup_name: setupName,
+        trade_style: tradeStyle,
+        trailing_stop_type: trailingStopType,
       });
 
       results.push({
         symbol,
         status: error ? "ERROR" : "PENDING",
-        reason: error?.message ?? "Awaiting confirmation",
+        reason: error?.message ?? (isPendingOrder ? `${entryType} at ${pendingEntryPrice}` : "Awaiting confirmation"),
         quantity,
         direction,
+        entry_type: entryType,
       });
     } else if (autoConfig.mode === "AUTO") {
-      // Open position directly
+      // Open position directly (MARKET orders)
       const result = await openPosition(supabase, accountId, account, {
         symbol,
         decision_id: decision.decision_id,
         direction,
         quantity,
         entry_price: entryPrice,
-        stop_loss: stopLoss,
-        take_profit_1: decision.take_profit_1,
-        take_profit_2: decision.take_profit_2,
-        take_profit_3: decision.take_profit_3,
-        trailing_stop_percent: decision.trailing_stop_percent ?? 3.0,
+        stop_loss: stopSoft,
+        stop_loss_soft: stopSoft,
+        stop_loss_hard: stopHard,
+        take_profit_1: tp1,
+        take_profit_2: tp2,
+        take_profit_3: tp3,
+        trailing_stop_percent: decision.trailing_stop_percent ?? strategyParams.trailing_stop_default,
         trigger_source: "AUTO_SIGNAL",
         notes: `Auto-Trade: ${decision.reasoning?.slice(0, 200)}`,
+        entry_type: entryType,
+        setup_name: setupName,
+        trade_style: tradeStyle,
+        trailing_stop_type: trailingStopType,
       });
       results.push({ symbol, ...result });
     } else {
@@ -244,6 +341,9 @@ async function handleAutoTrade(supabase: any, body: any) {
 async function handleOpenPosition(supabase: any, body: any) {
   const accountId = body.account_id ?? 1;
 
+  // Load dynamic strategy parameters
+  const strategyParams = await loadStrategyConfig(supabase);
+
   const { data: account } = await supabase
     .from("demo_accounts")
     .select("*")
@@ -262,7 +362,7 @@ async function handleOpenPosition(supabase: any, body: any) {
     take_profit_1: body.take_profit_1,
     take_profit_2: body.take_profit_2,
     take_profit_3: body.take_profit_3,
-    trailing_stop_percent: body.trailing_stop_percent ?? 3.0,
+    trailing_stop_percent: body.trailing_stop_percent ?? strategyParams.trailing_stop_default,
     trigger_source: body.trigger_source ?? "MANUAL",
     notes: body.notes,
   });
@@ -348,7 +448,72 @@ async function handleCheckExits(supabase: any, body: any) {
       }
     }
 
-    // TP1 and TP2 are informational (don't auto-close, just log)
+    // V6.0: Check +1R Partial Close (50% at 1R)
+    if (!pos.partial_close_at_1r && pos.stop_loss) {
+      const sl = Number(pos.stop_loss);
+      const oneR = Math.abs(entryPrice - sl);
+      const target1R = isLong ? entryPrice + oneR : entryPrice - oneR;
+      if ((isLong && currentPrice >= target1R) || (!isLong && currentPrice <= target1R)) {
+        // Close 50% of position at +1R
+        const halfQty = Math.floor(Number(pos.quantity) / 2);
+        if (halfQty > 0) {
+          const partialPnl = isLong
+            ? (currentPrice - entryPrice) * halfQty
+            : (entryPrice - currentPrice) * halfQty;
+
+          // Update position: reduce quantity, set partial close flag, move SL to breakeven
+          await supabase.from("demo_positions").update({
+            quantity: Number(pos.quantity) - halfQty,
+            partial_close_at_1r: true,
+            partial_close_price: currentPrice,
+            stop_loss: entryPrice,  // Move SL to breakeven!
+            notes: (pos.notes ?? "") + ` | +1R partial: ${halfQty}@${currentPrice}`,
+            updated_at: new Date().toISOString(),
+          }).eq("id", pos.id);
+
+          // Log partial close transaction
+          const { data: account } = await supabase.from("demo_accounts").select("*").eq("id", accountId).single();
+          if (account) {
+            const newBalance = account.current_balance + partialPnl;
+            await supabase.from("demo_accounts").update({
+              current_balance: Math.round(newBalance * 100) / 100,
+              reserved_balance: Math.max(0, (account.reserved_balance ?? 0) - halfQty * entryPrice),
+              updated_at: new Date().toISOString(),
+            }).eq("id", accountId);
+
+            await supabase.from("demo_transactions").insert({
+              account_id: accountId, position_id: pos.id,
+              transaction_type: "PARTIAL_CLOSE",
+              symbol: pos.symbol, quantity: halfQty, price: currentPrice,
+              amount: Math.round(partialPnl * 100) / 100,
+              balance_after: Math.round(newBalance * 100) / 100,
+              notes: `+1R Partial Close: ${halfQty}x ${pos.symbol} @ $${currentPrice}`,
+            });
+          }
+
+          results.push({ symbol: pos.symbol, action: "PARTIAL_CLOSE_1R", quantity_closed: halfQty, price: currentPrice });
+          continue;
+        }
+      }
+    }
+
+    // V6.0: Check Premium Signal Exit (counter-signal = close immediately)
+    const { data: counterPremium } = await supabase
+      .from("premium_signals")
+      .select("signal_type, direction")
+      .eq("symbol", pos.symbol)
+      .eq("is_active", true)
+      .eq("is_premium", true)
+      .neq("direction", pos.position_type)  // Counter-direction
+      .limit(1);
+
+    if (counterPremium?.length > 0) {
+      const result = await closePosition(supabase, pos, currentPrice, "PREMIUM_COUNTER_SIGNAL");
+      results.push({ symbol: pos.symbol, action: "PREMIUM_EXIT", signal: counterPremium[0].signal_type, ...result });
+      continue;
+    }
+
+    // TP1 and TP2 tracking (informational)
     let tpStatus = "HOLDING";
     if (pos.take_profit_2) {
       const tp2 = Number(pos.take_profit_2);
@@ -389,6 +554,9 @@ async function handleUpdateTrailing(supabase: any, body: any) {
   const accountId = body.account_id ?? 1;
   const results: any[] = [];
 
+  // Load dynamic strategy parameters for trailing stop default
+  const strategyParams = await loadStrategyConfig(supabase);
+
   const { data: positions } = await supabase
     .from("demo_positions")
     .select("*")
@@ -403,7 +571,7 @@ async function handleUpdateTrailing(supabase: any, body: any) {
     const currentPrice = Number(pos.current_price ?? pos.entry_price);
     const entryPrice = Number(pos.entry_price);
     const isLong = pos.position_type === "LONG";
-    const trailingPct = Number(pos.trailing_stop_percent ?? 3.0);
+    const trailingPct = Number(pos.trailing_stop_percent ?? strategyParams.trailing_stop_default);
 
     // Check if we should look for a new trailing_stop_percent from latest AI decision
     const { data: latestDecision } = await supabase
@@ -439,20 +607,95 @@ async function handleUpdateTrailing(supabase: any, body: any) {
       }
     }
 
-    // Calculate trailing stop price
+    // Calculate trailing stop price — V6.0: Support Senkou Span B mode
     let trailingStopPrice: number | null = null;
+    const trailingType = pos.trailing_stop_type ?? "PERCENT";
+    let senkouValue: number | null = null;
+
     if (activated) {
-      if (isLong) {
-        trailingStopPrice = Math.round(newHighest * (1 - newTrailingPct / 100) * 100) / 100;
-        // Trailing stop should never be lower than original stop loss
-        if (pos.stop_loss && trailingStopPrice < Number(pos.stop_loss)) {
-          trailingStopPrice = Number(pos.stop_loss);
+      if (trailingType === "SENKOU_SPAN_B") {
+        // V6.0: Use Ichimoku Senkou Span B as trailing stop
+        const today = new Date().toISOString().slice(0, 10);
+        const { data: ichiData } = await supabase
+          .from("technical_indicators")
+          .select("value_4")  // Senkou Span B
+          .eq("symbol", pos.symbol)
+          .eq("indicator_name", "ICHIMOKU")
+          .order("date", { ascending: false })
+          .limit(1)
+          .single();
+
+        if (ichiData?.value_4) {
+          senkouValue = Number(ichiData.value_4);
+          if (isLong) {
+            // LONG: trailing = MAX(current trailing, Senkou Span B)
+            trailingStopPrice = Math.max(
+              Number(pos.trailing_stop_price ?? 0),
+              senkouValue
+            );
+            // Never below original stop loss
+            if (pos.stop_loss && trailingStopPrice < Number(pos.stop_loss)) {
+              trailingStopPrice = Number(pos.stop_loss);
+            }
+          } else {
+            // SHORT: trailing = MIN(current trailing, Senkou Span B)
+            const currentTrail = pos.trailing_stop_price ? Number(pos.trailing_stop_price) : Infinity;
+            trailingStopPrice = Math.min(currentTrail, senkouValue);
+            if (pos.stop_loss && trailingStopPrice > Number(pos.stop_loss)) {
+              trailingStopPrice = Number(pos.stop_loss);
+            }
+          }
+        } else {
+          // Fallback to percent-based if no Ichimoku data
+          if (isLong) {
+            trailingStopPrice = Math.round(newHighest * (1 - newTrailingPct / 100) * 100) / 100;
+          } else {
+            trailingStopPrice = Math.round(newLowest * (1 + newTrailingPct / 100) * 100) / 100;
+          }
         }
       } else {
-        trailingStopPrice = Math.round(newLowest * (1 + newTrailingPct / 100) * 100) / 100;
-        // Trailing stop should never be higher than original stop loss
-        if (pos.stop_loss && trailingStopPrice > Number(pos.stop_loss)) {
-          trailingStopPrice = Number(pos.stop_loss);
+        // Standard percent-based trailing
+        if (isLong) {
+          trailingStopPrice = Math.round(newHighest * (1 - newTrailingPct / 100) * 100) / 100;
+          if (pos.stop_loss && trailingStopPrice < Number(pos.stop_loss)) {
+            trailingStopPrice = Number(pos.stop_loss);
+          }
+        } else {
+          trailingStopPrice = Math.round(newLowest * (1 + newTrailingPct / 100) * 100) / 100;
+          if (pos.stop_loss && trailingStopPrice > Number(pos.stop_loss)) {
+            trailingStopPrice = Number(pos.stop_loss);
+          }
+        }
+      }
+
+      // V6.0: Check for gray premium signal → trail under candle low/high
+      const { data: graySignal } = await supabase
+        .from("premium_signals")
+        .select("signal_type")
+        .eq("symbol", pos.symbol)
+        .eq("is_active", true)
+        .eq("signal_type", "GRAY")
+        .limit(1);
+
+      if (graySignal?.length > 0) {
+        // Gray signal → tighten trailing to under last candle low (LONG) or above high (SHORT)
+        const { data: lastCandle } = await supabase
+          .from("stock_prices")
+          .select("low, high")
+          .eq("symbol", pos.symbol)
+          .order("date", { ascending: false })
+          .limit(1)
+          .single();
+
+        if (lastCandle) {
+          const grayTrail = isLong ? Number(lastCandle.low) : Number(lastCandle.high);
+          if (trailingStopPrice !== null) {
+            trailingStopPrice = isLong
+              ? Math.max(trailingStopPrice, grayTrail)
+              : Math.min(trailingStopPrice, grayTrail);
+          } else {
+            trailingStopPrice = grayTrail;
+          }
         }
       }
     }
@@ -466,6 +709,7 @@ async function handleUpdateTrailing(supabase: any, body: any) {
         trailing_stop_activated: activated,
         trailing_stop_highest: isLong ? newHighest : pos.trailing_stop_highest,
         trailing_stop_lowest: !isLong ? newLowest : pos.trailing_stop_lowest,
+        trailing_stop_senkou: senkouValue,
         updated_at: new Date().toISOString(),
       })
       .eq("id", pos.id);
@@ -594,8 +838,10 @@ async function handleReset(supabase: any, body: any) {
 async function openPosition(supabase: any, accountId: number, account: any, params: any) {
   const {
     symbol, decision_id, direction, quantity, entry_price,
-    stop_loss, take_profit_1, take_profit_2, take_profit_3,
+    stop_loss, stop_loss_soft, stop_loss_hard,
+    take_profit_1, take_profit_2, take_profit_3,
     trailing_stop_percent, trigger_source, notes,
+    entry_type, setup_name, trade_style, trailing_stop_type,
   } = params;
 
   if (!symbol || !direction || !quantity || !entry_price) {
@@ -611,7 +857,7 @@ async function openPosition(supabase: any, accountId: number, account: any, para
 
   const isLong = direction === "LONG";
 
-  // Create position
+  // Create position with V6.0 columns
   const { data: position, error: posError } = await supabase
     .from("demo_positions")
     .insert({
@@ -623,7 +869,9 @@ async function openPosition(supabase: any, accountId: number, account: any, para
       quantity,
       entry_price,
       current_price: entry_price,
-      stop_loss,
+      stop_loss: stop_loss_soft || stop_loss,
+      stop_loss_soft: stop_loss_soft || stop_loss || null,
+      stop_loss_hard: stop_loss_hard || null,
       take_profit_1,
       take_profit_2,
       take_profit_3,
@@ -635,6 +883,11 @@ async function openPosition(supabase: any, accountId: number, account: any, para
       trigger_source: trigger_source ?? "MANUAL",
       notes,
       opened_at: new Date().toISOString(),
+      // V6.0 new columns
+      entry_type: entry_type || "MARKET",
+      setup_name: setup_name || null,
+      trade_style: trade_style || "CTT",
+      trailing_stop_type: trailing_stop_type || "PERCENT",
     })
     .select("id")
     .single();
@@ -769,6 +1022,46 @@ async function closePosition(supabase: any, position: any, exitPrice: number, cl
     });
   }
 
+  // V6.0: Track signal performance for self-improvement
+  if (position.setup_name || position.trigger_source === "AUTO_SIGNAL") {
+    const slDistance = position.stop_loss ? Math.abs(Number(position.entry_price) - Number(position.stop_loss)) : 0;
+    const pnlR = slDistance > 0 ? pnlAmount / (slDistance * quantity) : null;
+
+    // Get lochstreifen snapshot at entry time
+    const { data: entryLochstreifen } = await supabase
+      .from("lochstreifen_state")
+      .select("status, candle_color, cloud_color, trend, setter, wave, metadata")
+      .eq("symbol", position.symbol)
+      .eq("date", position.opened_at?.slice(0, 10) ?? new Date().toISOString().slice(0, 10))
+      .single();
+
+    await supabase.from("signal_performance_tracking").insert({
+      position_id: position.id,
+      symbol: position.symbol,
+      signal_type: position.setup_name || position.trigger_source || "UNKNOWN",
+      direction: position.position_type,
+      entry_date: position.opened_at?.slice(0, 10),
+      exit_date: new Date().toISOString().slice(0, 10),
+      entry_price: Number(position.entry_price),
+      exit_price: exitPrice,
+      pnl_percent: Math.round(pnlPercent * 100) / 100,
+      pnl_r: pnlR ? Math.round(pnlR * 100) / 100 : null,
+      holding_days: holdingDays,
+      market_regime: entryLochstreifen?.metadata?.market_regime ?? null,
+      lochstreifen_snapshot: entryLochstreifen ? {
+        status: entryLochstreifen.status,
+        candle: entryLochstreifen.candle_color,
+        cloud: entryLochstreifen.cloud_color,
+        trend: entryLochstreifen.trend,
+        setter: entryLochstreifen.setter,
+        wave: entryLochstreifen.wave,
+      } : null,
+      was_profitable: pnlAmount > 0,
+    }).then(({ error }) => {
+      if (error) console.error("signal_performance_tracking insert error:", error);
+    });
+  }
+
   return {
     status,
     symbol: position.symbol,
@@ -780,12 +1073,24 @@ async function closePosition(supabase: any, position: any, exitPrice: number, cl
   };
 }
 
-async function checkTradingRules(supabase: any, accountId: number, account: any, decision: any) {
+async function checkTradingRules(
+  supabase: any,
+  accountId: number,
+  account: any,
+  decision: any,
+  strategyParams?: StrategyParams
+) {
   const { data: rules } = await supabase
     .from("trading_rules")
     .select("*")
     .eq("account_id", accountId)
     .eq("is_active", true);
+
+  // Use strategy_config defaults if available, otherwise hardcoded fallbacks
+  const defaultMaxPositionSize = strategyParams?.max_position_size ?? 20000;
+  const defaultMaxOpenPositions = strategyParams?.max_open_positions ?? 5;
+  const defaultMaxRiskPct = strategyParams?.risk_per_trade_percent ?? 2.0;
+  const defaultMinConfidence = strategyParams?.min_confidence_threshold ?? 55;
 
   const results: any[] = [];
   let allPassed = true;
@@ -797,14 +1102,14 @@ async function checkTradingRules(supabase: any, accountId: number, account: any,
 
     switch (rule.rule_type) {
       case "MAX_POSITION_SIZE": {
-        const maxSize = Number(ruleValue?.max_amount ?? 20000);
+        const maxSize = Number(ruleValue?.max_amount ?? defaultMaxPositionSize);
         const posSize = Number(decision.entry_price) * 10; // approximate
         passed = posSize <= maxSize;
         reason = `Position $${posSize} vs max $${maxSize}`;
         break;
       }
       case "MAX_OPEN_POSITIONS": {
-        const maxOpen = Number(ruleValue?.max_count ?? 5);
+        const maxOpen = Number(ruleValue?.max_count ?? defaultMaxOpenPositions);
         const { count } = await supabase
           .from("demo_positions")
           .select("*", { count: "exact", head: true })
@@ -815,7 +1120,7 @@ async function checkTradingRules(supabase: any, accountId: number, account: any,
         break;
       }
       case "MAX_RISK_PER_TRADE": {
-        const maxRiskPct = Number(ruleValue?.max_percent ?? 2);
+        const maxRiskPct = Number(ruleValue?.max_percent ?? defaultMaxRiskPct);
         const entry = Number(decision.entry_price);
         const sl = Number(decision.stop_loss);
         if (entry && sl) {
@@ -826,7 +1131,7 @@ async function checkTradingRules(supabase: any, accountId: number, account: any,
         break;
       }
       case "MIN_SIGNAL_GRADE": {
-        const minConf = Number(ruleValue?.min_confidence ?? 60);
+        const minConf = Number(ruleValue?.min_confidence ?? defaultMinConfidence);
         const conf = Number(decision.confidence_score ?? 0);
         // B+ = 70+, A = 80+, A+ = 90+
         passed = conf >= minConf;
@@ -834,7 +1139,7 @@ async function checkTradingRules(supabase: any, accountId: number, account: any,
         break;
       }
       case "MIN_CONFIDENCE": {
-        const minConf = Number(ruleValue?.min_percent ?? 65);
+        const minConf = Number(ruleValue?.min_percent ?? defaultMinConfidence);
         const conf = Number(decision.confidence_score ?? 0);
         passed = conf >= minConf;
         reason = `Confidence ${conf}% vs min ${minConf}%`;
@@ -849,6 +1154,104 @@ async function checkTradingRules(supabase: any, accountId: number, account: any,
   }
 
   return { allPassed, results };
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// CHECK_PENDING — Activate STOP_BUY/STOP_SELL orders when trigger is hit
+// Called daily after prices are updated
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+async function handleCheckPending(supabase: any, body: any) {
+  const accountId = body.account_id ?? 1;
+  const results: any[] = [];
+
+  // Get all PENDING positions with pending_entry_price
+  const { data: pendingPositions } = await supabase
+    .from("demo_positions")
+    .select("*")
+    .eq("account_id", accountId)
+    .eq("position_status", "PENDING")
+    .not("pending_entry_price", "is", null);
+
+  if (!pendingPositions?.length) {
+    return jsonResponse({ message: "No pending orders", results: [] });
+  }
+
+  const { data: account } = await supabase
+    .from("demo_accounts")
+    .select("*")
+    .eq("id", accountId)
+    .single();
+
+  for (const pos of pendingPositions) {
+    const currentPrice = Number(pos.current_price ?? pos.entry_price);
+    const triggerPrice = Number(pos.pending_entry_price);
+    const isLong = pos.position_type === "LONG";
+    const entryType = pos.entry_type ?? "MARKET";
+
+    // Check expiry (5 days for pending orders)
+    const daysSinceCreated = Math.round(
+      (new Date().getTime() - new Date(pos.opened_at ?? pos.created_at).getTime()) / (1000 * 60 * 60 * 24)
+    );
+
+    if (daysSinceCreated > 5) {
+      // Expire the pending order
+      await supabase.from("demo_positions").update({
+        position_status: "CANCELLED",
+        notes: (pos.notes ?? "") + " | EXPIRED after 5 days",
+        updated_at: new Date().toISOString(),
+      }).eq("id", pos.id);
+      results.push({ symbol: pos.symbol, action: "EXPIRED", days: daysSinceCreated });
+      continue;
+    }
+
+    // Check if trigger price is hit
+    let triggered = false;
+    if (entryType === "STOP_BUY" && currentPrice >= triggerPrice) {
+      triggered = true;  // Price went above stop-buy level
+    } else if (entryType === "STOP_SELL" && currentPrice <= triggerPrice) {
+      triggered = true;  // Price went below stop-sell level
+    }
+
+    if (triggered && account) {
+      // Activate the position: change status to OPEN, set entry at trigger price
+      await supabase.from("demo_positions").update({
+        position_status: "OPEN",
+        entry_price: triggerPrice,
+        current_price: currentPrice,
+        opened_at: new Date().toISOString(),
+        trailing_stop_highest: isLong ? triggerPrice : pos.trailing_stop_highest,
+        trailing_stop_lowest: !isLong ? triggerPrice : pos.trailing_stop_lowest,
+        notes: (pos.notes ?? "") + ` | Triggered: ${entryType} at ${triggerPrice}`,
+        updated_at: new Date().toISOString(),
+      }).eq("id", pos.id);
+
+      // Reserve balance
+      const cost = Number(pos.quantity) * triggerPrice;
+      await supabase.from("demo_accounts").update({
+        reserved_balance: (account.reserved_balance ?? 0) + cost,
+        updated_at: new Date().toISOString(),
+      }).eq("id", accountId);
+
+      // Log transaction
+      await supabase.from("demo_transactions").insert({
+        account_id: accountId,
+        position_id: pos.id,
+        transaction_type: isLong ? "BUY" : "SHORT_OPEN",
+        symbol: pos.symbol,
+        quantity: Number(pos.quantity),
+        price: triggerPrice,
+        amount: -cost,
+        balance_after: account.current_balance,
+        notes: `${entryType} triggered: ${Number(pos.quantity)}x ${pos.symbol} @ $${triggerPrice}`,
+      });
+
+      results.push({ symbol: pos.symbol, action: "TRIGGERED", entry_type: entryType, price: triggerPrice });
+    } else {
+      results.push({ symbol: pos.symbol, action: "WAITING", trigger: triggerPrice, current: currentPrice, days: daysSinceCreated });
+    }
+  }
+
+  return jsonResponse({ message: `Checked ${pendingPositions.length} pending orders`, results });
 }
 
 function jsonResponse(data: any) {

@@ -61,14 +61,14 @@ import { useBalanceSnapshots } from "@/hooks/useBalanceSnapshots";
 import { usePnlBySymbol } from "@/hooks/usePnlBySymbol";
 import { useTradingRules, type TradingRule } from "@/hooks/useTradingRules";
 import { useClosedPositions } from "@/hooks/useClosedPositions";
+import { useAccountContext } from "@/contexts/AccountContext";
+import MonthlyReturnsHeatmap from "@/components/portfolio/MonthlyReturnsHeatmap";
+import SetupPerformance from "@/components/portfolio/SetupPerformance";
+import ExitReasonChart from "@/components/portfolio/ExitReasonChart";
+import DrawdownChart from "@/components/portfolio/DrawdownChart";
+import SymbolRanking from "@/components/portfolio/SymbolRanking";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
-
-// ────────────────────────────────────────────
-// Constants
-// ────────────────────────────────────────────
-const ACCOUNT_ID = 1;
-const INITIAL_BALANCE = 100_000;
 
 const fmt = (v: number | null | undefined, prefix = "$") =>
   v != null ? `${prefix}${Number(v).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "\u2014";
@@ -118,6 +118,7 @@ function MetricCard({
 type TimeRange = "1W" | "1M" | "3M" | "ALL";
 
 function EquityCurve() {
+  const { accountId } = useAccountContext();
   const [range, setRange] = useState<TimeRange>("ALL");
 
   const daysMap: Record<TimeRange, number | undefined> = {
@@ -127,7 +128,7 @@ function EquityCurve() {
     ALL: undefined,
   };
 
-  const { snapshots, isLoading } = useBalanceSnapshots(ACCOUNT_ID, daysMap[range]);
+  const { snapshots, isLoading } = useBalanceSnapshots(accountId, daysMap[range]);
 
   const chartData = useMemo(
     () =>
@@ -139,7 +140,8 @@ function EquityCurve() {
     [snapshots]
   );
 
-  const isPositive = chartData.length > 0 && chartData[chartData.length - 1].balance >= INITIAL_BALANCE;
+  const initialBalance = snapshots.length > 0 ? Number(snapshots[0].balance) : 100_000;
+  const isPositive = chartData.length > 0 && chartData[chartData.length - 1].balance >= initialBalance;
 
   if (isLoading) {
     return <Skeleton className="h-[300px] rounded-xl" />;
@@ -206,11 +208,11 @@ function EquityCurve() {
               formatter={(value: number) => [`$${value.toLocaleString("en-US", { minimumFractionDigits: 2 })}`, "Kontostand"]}
             />
             <ReferenceLine
-              y={INITIAL_BALANCE}
+              y={initialBalance}
               stroke="hsl(215, 12%, 35%)"
               strokeDasharray="6 4"
               label={{
-                value: "$100k",
+                value: `$${(initialBalance / 1000).toFixed(0)}k`,
                 position: "insideTopRight",
                 fill: "hsl(215, 12%, 55%)",
                 fontSize: 10,
@@ -234,7 +236,8 @@ function EquityCurve() {
 // P&L by Symbol Chart
 // ────────────────────────────────────────────
 function PnlBySymbolChart() {
-  const { symbolPnl, isLoading } = usePnlBySymbol(ACCOUNT_ID);
+  const { accountId } = useAccountContext();
+  const { symbolPnl, isLoading } = usePnlBySymbol(accountId);
 
   if (isLoading) {
     return <Skeleton className="h-[300px] rounded-xl" />;
@@ -303,8 +306,9 @@ function PnlBySymbolChart() {
 // Trading Statistics
 // ────────────────────────────────────────────
 function TradingStats() {
-  const { account, isLoading: accountLoading } = useDemoAccount(ACCOUNT_ID);
-  const { positions, isLoading: positionsLoading } = useClosedPositions(ACCOUNT_ID);
+  const { accountId } = useAccountContext();
+  const { account, isLoading: accountLoading } = useDemoAccount(accountId);
+  const { positions, isLoading: positionsLoading } = useClosedPositions(accountId);
 
   if (accountLoading || positionsLoading) {
     return <Skeleton className="h-[300px] rounded-xl" />;
@@ -372,7 +376,8 @@ function TradingStats() {
 // Trading Rules Section
 // ────────────────────────────────────────────
 function TradingRulesSection() {
-  const { rules, isLoading, updateRule, toggleRule } = useTradingRules(ACCOUNT_ID);
+  const { accountId, isReadOnly } = useAccountContext();
+  const { rules, isLoading, updateRule, toggleRule } = useTradingRules(accountId);
   const [open, setOpen] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editValue, setEditValue] = useState("");
@@ -493,8 +498,12 @@ function TradingRulesSection() {
 // Account Actions
 // ────────────────────────────────────────────
 function AccountActions() {
-  const { positions } = useClosedPositions(ACCOUNT_ID);
+  const { accountId, isReadOnly } = useAccountContext();
+  const { positions } = useClosedPositions(accountId);
   const [isResetting, setIsResetting] = useState(false);
+
+  // Hide destructive actions for read-only accounts (backtest)
+  if (isReadOnly) return null;
 
   const exportCSV = () => {
     if (positions.length === 0) return;
@@ -534,7 +543,7 @@ function AccountActions() {
     setIsResetting(true);
     try {
       const { error } = await supabase.functions.invoke("demo-trade-engine", {
-        body: { action: "reset_account", account_id: ACCOUNT_ID },
+        body: { action: "reset_account", account_id: accountId },
       });
       if (error) throw error;
       toast.success("Demo-Konto wurde zur\u00fcckgesetzt");
@@ -589,7 +598,10 @@ function AccountActions() {
 // Main Portfolio Page
 // ────────────────────────────────────────────
 export default function Portfolio() {
-  const { account, isLoading } = useDemoAccount(ACCOUNT_ID);
+  const { accountId, accountInfo, isReadOnly } = useAccountContext();
+  const { account, isLoading } = useDemoAccount(accountId);
+
+  const initialBalance = account?.initial_balance ?? 100_000;
 
   const winRate =
     account && account.total_trades > 0
@@ -597,9 +609,9 @@ export default function Portfolio() {
       : "0.0";
 
   const balanceTrend =
-    account && account.current_balance >= (account.peak_balance ?? INITIAL_BALANCE)
+    account && account.current_balance >= (account.peak_balance ?? initialBalance)
       ? "up"
-      : account && account.current_balance >= INITIAL_BALANCE
+      : account && account.current_balance >= initialBalance
         ? "up"
         : "down";
 
@@ -617,7 +629,10 @@ export default function Portfolio() {
         </div>
         <div>
           <h1 className="font-display text-2xl font-bold text-foreground">Portfolio</h1>
-          <p className="text-xs text-muted-foreground">Demo-Konto \u00dcbersicht & Analyse</p>
+          <p className="text-xs text-muted-foreground">
+            {accountInfo.label} — {accountInfo.description}
+            {isReadOnly && <span className="ml-2 text-blue-400">(Nur Lesen)</span>}
+          </p>
         </div>
       </motion.div>
 
@@ -640,7 +655,7 @@ export default function Portfolio() {
             value={fmt(account?.current_balance)}
             subtitle={
               account
-                ? `${account.current_balance >= INITIAL_BALANCE ? "+" : ""}${fmt(account.current_balance - INITIAL_BALANCE, "$")} vs. Start`
+                ? `${account.current_balance >= initialBalance ? "+" : ""}${fmt(account.current_balance - initialBalance, "$")} vs. Start`
                 : undefined
             }
             icon={DollarSign}
@@ -679,31 +694,62 @@ export default function Portfolio() {
         <EquityCurve />
       </motion.div>
 
-      {/* Row 3: P&L by Symbol + Statistics */}
+      {/* Row 3: Monthly Returns + Drawdown */}
       <motion.div
         initial={{ opacity: 0, y: 8 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.3, delay: 0.3 }}
         className="grid grid-cols-1 lg:grid-cols-2 gap-6"
       >
+        <MonthlyReturnsHeatmap accountId={accountId} />
+        <DrawdownChart accountId={accountId} />
+      </motion.div>
+
+      {/* Row 4: P&L by Symbol + Statistics */}
+      <motion.div
+        initial={{ opacity: 0, y: 8 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.3, delay: 0.35 }}
+        className="grid grid-cols-1 lg:grid-cols-2 gap-6"
+      >
         <PnlBySymbolChart />
         <TradingStats />
       </motion.div>
 
-      {/* Row 4: Trading Rules */}
+      {/* Row 5: Setup Performance + Exit Analysis */}
       <motion.div
         initial={{ opacity: 0, y: 8 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.3, delay: 0.4 }}
+        className="grid grid-cols-1 lg:grid-cols-2 gap-6"
       >
-        <TradingRulesSection />
+        <SetupPerformance accountId={accountId} />
+        <ExitReasonChart accountId={accountId} />
       </motion.div>
 
-      {/* Row 5: Account Actions */}
+      {/* Row 6: Symbol Ranking */}
+      <motion.div
+        initial={{ opacity: 0, y: 8 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.3, delay: 0.45 }}
+      >
+        <SymbolRanking accountId={accountId} />
+      </motion.div>
+
+      {/* Row 7: Trading Rules */}
       <motion.div
         initial={{ opacity: 0, y: 8 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.3, delay: 0.5 }}
+      >
+        <TradingRulesSection />
+      </motion.div>
+
+      {/* Row 8: Account Actions */}
+      <motion.div
+        initial={{ opacity: 0, y: 8 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.3, delay: 0.55 }}
       >
         <AccountActions />
       </motion.div>

@@ -1,6 +1,10 @@
 import { TrendingUp } from "lucide-react";
+import AccountSwitcher from "@/components/layout/AccountSwitcher";
+import { useAccountContext } from "@/contexts/AccountContext";
 
 export default function DashboardHeader() {
+  const { accountInfo, isBacktest } = useAccountContext();
+
   const today = new Date().toLocaleDateString("de-DE", {
     weekday: "long",
     year: "numeric",
@@ -16,11 +20,19 @@ export default function DashboardHeader() {
         </div>
         <div>
           <h1 className="font-display text-2xl font-bold text-foreground">
-            BörsenStar <span className="text-primary">V4.0</span>
+            BörsenStar <span className="text-primary">V6.0</span>
           </h1>
-          <p className="text-xs text-muted-foreground">{today}</p>
+          <p className="text-xs text-muted-foreground">
+            {today}
+            {isBacktest && (
+              <span className="ml-2 text-blue-400 font-medium">
+                — Backtest-Modus
+              </span>
+            )}
+          </p>
         </div>
       </div>
+      <AccountSwitcher />
     </div>
   );
 }

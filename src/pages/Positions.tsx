@@ -57,6 +57,7 @@ import { useClosedPositions } from "@/hooks/useClosedPositions";
 import { useCloseTrade } from "@/hooks/useCloseTrade";
 import { useAutoTradeConfig } from "@/hooks/useAutoTradeConfig";
 import { useDemoAccount } from "@/hooks/useDemoAccount";
+import { useAccountContext } from "@/contexts/AccountContext";
 
 // ────────────────────────────────────────────
 // Helpers
@@ -99,8 +100,6 @@ function sortPositions<T extends Record<string, unknown>>(
     return dir === "asc" ? (av as number) - (bv as number) : (bv as number) - (av as number);
   });
 }
-
-const ACCOUNT_ID = 1;
 
 const ALL_SYMBOLS = ["AAPL", "MSFT", "AMZN", "JPM", "V", "SAP", "SIEGY", "BMWYY"];
 
@@ -148,7 +147,8 @@ function SortHeader({
 // Open Positions Tab
 // ────────────────────────────────────────────
 function OpenPositionsTab() {
-  const { positions, isLoading } = useOpenPositions(ACCOUNT_ID);
+  const { accountId, isReadOnly } = useAccountContext();
+  const { positions, isLoading } = useOpenPositions(accountId);
   const { closeTrade, isLoading: isClosing } = useCloseTrade();
   const [sortKey, setSortKey] = useState<string>("opened_at");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
@@ -280,7 +280,8 @@ function OpenPositionsTab() {
 // Closed Positions Tab
 // ────────────────────────────────────────────
 function ClosedPositionsTab() {
-  const { positions, isLoading, totalCount, page, setPage } = useClosedPositions(ACCOUNT_ID);
+  const { accountId } = useAccountContext();
+  const { positions, isLoading, totalCount, page, setPage } = useClosedPositions(accountId);
   const totalPages = Math.ceil(totalCount / 20);
 
   const exportCSV = () => {
@@ -446,7 +447,8 @@ function ClosedPositionsTab() {
 // Pending Positions Tab
 // ────────────────────────────────────────────
 function PendingPositionsTab() {
-  const { positions, isLoading, refetch } = useOpenPositions(ACCOUNT_ID);
+  const { accountId } = useAccountContext();
+  const { positions, isLoading, refetch } = useOpenPositions(accountId);
   const { closeTrade, isLoading: isClosing } = useCloseTrade();
 
   const pending = positions.filter((p) => p.position_status === "PENDING");
@@ -570,7 +572,11 @@ function PendingPositionsTab() {
 // Auto-Trade Config Section
 // ────────────────────────────────────────────
 function AutoTradeConfigSection() {
-  const { config, isLoading, updateConfig } = useAutoTradeConfig(ACCOUNT_ID);
+  const { accountId, isReadOnly } = useAccountContext();
+  const { config, isLoading, updateConfig } = useAutoTradeConfig(accountId);
+
+  // Hide auto-trade config for read-only accounts (backtest)
+  if (isReadOnly) return null;
   const [open, setOpen] = useState(false);
 
   if (isLoading || !config) {
@@ -740,7 +746,8 @@ function SummaryBar({ positions }: { positions: DemoPosition[] }) {
 // Main Positions Page
 // ────────────────────────────────────────────
 export default function Positions() {
-  const { positions, isLoading } = useOpenPositions(ACCOUNT_ID);
+  const { accountId, accountInfo, isReadOnly } = useAccountContext();
+  const { positions, isLoading } = useOpenPositions(accountId);
   const pendingCount = positions.filter((p) => p.position_status === "PENDING").length;
 
   return (
@@ -757,7 +764,10 @@ export default function Positions() {
         </div>
         <div>
           <h1 className="font-display text-2xl font-bold text-foreground">Positionen</h1>
-          <p className="text-xs text-muted-foreground">Demo-Trading Positionen verwalten</p>
+          <p className="text-xs text-muted-foreground">
+            {accountInfo.label} — Positionen verwalten
+            {isReadOnly && <span className="ml-2 text-blue-400">(Nur Lesen)</span>}
+          </p>
         </div>
       </motion.div>
 
