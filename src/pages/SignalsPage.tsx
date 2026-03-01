@@ -5,7 +5,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Slider } from "@/components/ui/slider";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { ChevronRight, ChevronDown, TrendingUp, Filter, Target, ShieldAlert, Trophy, CalendarDays, List } from "lucide-react";
+import { ChevronRight, ChevronDown, TrendingUp, Filter, Target, ShieldAlert, Trophy, CalendarDays, List, BarChart3 } from "lucide-react";
 
 // --- Helpers ---
 
@@ -399,7 +399,7 @@ function ExpandedRowDetail({ d }: { d: any }) {
 // --- Main Page ---
 
 export default function SignalsPage() {
-  const [viewMode, setViewMode] = useState<"list" | "daily">("daily");
+  const [viewMode, setViewMode] = useState<"list" | "daily" | "symbol">("daily");
   const [symbolFilter, setSymbolFilter] = useState("ALL");
   const [actionFilter, setActionFilter] = useState("ALL");
   const [dateRange, setDateRange] = useState<DateRange>("all");
@@ -407,17 +407,25 @@ export default function SignalsPage() {
   const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set());
   const [expandedDays, setExpandedDays] = useState<Set<string>>(new Set());
 
-  // Fetch trading decisions
+  // Fetch trading decisions - use symbol filter to get all data for a specific symbol
   const decisionsQuery = useQuery({
-    queryKey: ["all-decisions"],
+    queryKey: ["all-decisions", symbolFilter],
     queryFn: async () => {
-      const { data, error } = await supabase
+      let query = supabase
         .from("trading_decisions")
         .select(
           "decision_id, symbol, decision_timestamp, action_type, confidence_score, reasoning, entry_price, stop_loss, take_profit_1, take_profit_2, take_profit_3, croc_status, ice_signals_active, strand1_signal, strand2_signal, strand3_signal, strand4_signal, strand1_long_score, strand1_short_score, strand2_confidence, strand3_long_score, strand3_short_score, strand4_long_score, strand4_short_score, created_at"
         )
-        .order("decision_timestamp", { ascending: false })
-        .limit(1000);
+        .order("decision_timestamp", { ascending: false });
+      
+      // When filtering by symbol, fetch all entries for that symbol
+      if (symbolFilter !== "ALL") {
+        query = query.eq("symbol", symbolFilter).limit(5000);
+      } else {
+        query = query.limit(2000);
+      }
+      
+      const { data, error } = await query;
       if (error) throw error;
       return data;
     },
@@ -485,6 +493,36 @@ export default function SignalsPage() {
         decisions: decisions.sort((a: any, b: any) => (b.confidence_score ?? 0) - (a.confidence_score ?? 0)),
       }));
   }, [filtered]);
+
+  // Group filtered decisions by symbol for symbol-chronik view
+  const symbolGroups = useMemo(() => {
+    const groups: Record<string, any[]> = {};
+    for (const d of filtered) {
+      if (!groups[d.symbol]) groups[d.symbol] = [];
+      groups[d.symbol].push(d);
+    }
+    return Object.entries(groups)
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([symbol, decisions]) => ({
+        symbol,
+        decisions: decisions.sort((a: any, b: any) => {
+          const da = a.decision_timestamp ?? "";
+          const db = b.decision_timestamp ?? "";
+          return db.localeCompare(da); // newest first
+        }),
+      }));
+  }, [filtered]);
+
+  const [expandedSymbols, setExpandedSymbols] = useState<Set<string>>(new Set());
+
+  const toggleSymbol = (sym: string) => {
+    setExpandedSymbols((prev) => {
+      const next = new Set(prev);
+      if (next.has(sym)) next.delete(sym);
+      else next.add(sym);
+      return next;
+    });
+  };
 
   const toggleDay = (day: string) => {
     setExpandedDays((prev) => {
@@ -613,6 +651,14 @@ export default function SignalsPage() {
             <CalendarDays className="h-3.5 w-3.5" /> Tagesansicht
           </Button>
           <Button
+            variant={viewMode === "symbol" ? "default" : "outline"}
+            size="sm"
+            className="h-9 text-xs px-2.5 gap-1.5"
+            onClick={() => setViewMode("symbol")}
+          >
+            <BarChart3 className="h-3.5 w-3.5" /> Symbol-Chronik
+          </Button>
+          <Button
             variant={viewMode === "list" ? "default" : "outline"}
             size="sm"
             className="h-9 text-xs px-2.5 gap-1.5"
@@ -702,6 +748,100 @@ export default function SignalsPage() {
                         <tbody>
                           {decisions.map((d: any, i: number) => {
                             const rowKey = String(d.decision_id ?? `day-${date}-${i}`);
+                            const isExpanded = expandedRows.has(rowKey);
+                            const grade = confidenceToGrade(d.confidence_score);
+                            return (
+                              <SignalRow
+                                key={rowKey}
+                                d={d}
+                                rowKey={rowKey}
+                                grade={grade}
+                                isExpanded={isExpanded}
+                                onToggle={toggleRow}
+                              />
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Symbol-Chronik View */}
+      {viewMode === "symbol" && (
+        <div className="space-y-3">
+          {symbolGroups.length === 0 && (
+            <div className="card-elevated rounded-xl border border-border/50 p-8 text-center text-sm text-muted-foreground">
+              Keine Analysen gefunden.
+            </div>
+          )}
+          {symbolGroups.map(({ symbol, decisions }) => {
+            const isSymExpanded = expandedSymbols.has(symbol);
+            const latestAction = decisions[0]?.action_type;
+            const latestConf = decisions[0]?.confidence_score;
+            const latestGrade = confidenceToGrade(latestConf);
+            const latestDate = decisions[0]?.decision_timestamp
+              ? new Date(decisions[0].decision_timestamp).toLocaleDateString("de-DE", { day: "2-digit", month: "2-digit", year: "2-digit" })
+              : "—";
+
+            return (
+              <div key={symbol} className="card-elevated rounded-xl border border-border/50 overflow-hidden">
+                <button
+                  onClick={() => toggleSymbol(symbol)}
+                  className="w-full flex items-center justify-between p-4 hover:bg-muted/20 transition-colors"
+                >
+                  <div className="flex items-center gap-3">
+                    {isSymExpanded ? (
+                      <ChevronDown className="h-4 w-4 text-muted-foreground" />
+                    ) : (
+                      <ChevronRight className="h-4 w-4 text-muted-foreground" />
+                    )}
+                    <BarChart3 className="h-4 w-4 text-primary" />
+                    <span className="font-display text-sm font-bold text-foreground">{symbol}</span>
+                    <span className="text-xs text-muted-foreground">({decisions.length} Analysen)</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-[10px] text-muted-foreground">Letztes: {latestDate}</span>
+                    {latestAction && (
+                      <Badge variant="outline" className={`text-[10px] ${actionColors[latestAction] ?? "bg-muted text-muted-foreground border-border"}`}>
+                        {latestAction}
+                      </Badge>
+                    )}
+                    <Badge variant="outline" className={`text-[10px] font-bold ${gradeColor(latestGrade)}`}>
+                      {latestGrade}
+                    </Badge>
+                    <span className="text-xs font-mono text-muted-foreground">
+                      {latestConf != null ? `${Number(latestConf).toFixed(0)}%` : "—"}
+                    </span>
+                  </div>
+                </button>
+
+                {isSymExpanded && (
+                  <div className="border-t border-border/30">
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-xs">
+                        <thead>
+                          <tr className="text-muted-foreground border-b border-border/30 bg-muted/20">
+                            <th className="w-8 p-3" />
+                            <th className="text-left p-3 font-medium">Datum</th>
+                            <th className="text-left p-3 font-medium">Aktion</th>
+                            <th className="text-center p-3 font-medium">Grade</th>
+                            <th className="text-right p-3 font-medium">Konfidenz</th>
+                            <th className="text-right p-3 font-medium">Entry</th>
+                            <th className="text-right p-3 font-medium">Stop</th>
+                            <th className="text-right p-3 font-medium">TP1</th>
+                            <th className="text-left p-3 font-medium">CROC</th>
+                            <th className="text-left p-3 font-medium">Stränge</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {decisions.map((d: any, i: number) => {
+                            const rowKey = `sym-${symbol}-${d.decision_id ?? i}`;
                             const isExpanded = expandedRows.has(rowKey);
                             const grade = confidenceToGrade(d.confidence_score);
                             return (
