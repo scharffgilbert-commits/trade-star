@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -17,6 +17,12 @@ import {
   Activity,
   ArrowRight,
   CalendarClock,
+  ChevronDown,
+  ChevronRight,
+  FileText,
+  Target,
+  ShieldAlert,
+  TrendingUp,
 } from "lucide-react";
 
 type RunStatus = "idle" | "running" | "success" | "error";
@@ -640,6 +646,9 @@ export default function RunPage() {
         )}
       </div>
 
+      {/* ============ Analyse-Chronik ============ */}
+      <AnalyseChronik symbols={SYMBOLS} />
+
       {/* Empty State: no recent runs */}
       {pipelineStatus === "idle" && recentRuns.data && recentRuns.data.length === 0 && (
         <EmptyState
@@ -757,6 +766,296 @@ export default function RunPage() {
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+// ============ Analyse-Chronik Component ============
+
+function AnalyseChronik({ symbols }: { symbols: string[] }) {
+  const navigate = useNavigate();
+  const [chronikSymbol, setChronikSymbol] = useState("ALL");
+  const [expandedDays, setExpandedDays] = useState<Set<string>>(new Set());
+  const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set());
+
+  const chronikQuery = useQuery({
+    queryKey: ["chronik-decisions", chronikSymbol],
+    queryFn: async () => {
+      let query = supabase
+        .from("trading_decisions")
+        .select(
+          "decision_id, symbol, decision_timestamp, action_type, confidence_score, reasoning, entry_price, stop_loss, take_profit_1, take_profit_2, take_profit_3, croc_status, ice_signals_active, strand1_long_score, strand1_short_score, strand2_confidence, strand3_long_score, strand3_short_score, strand4_long_score, strand4_short_score, created_at"
+        )
+        .order("decision_timestamp", { ascending: false });
+
+      if (chronikSymbol !== "ALL") {
+        query = query.eq("symbol", chronikSymbol).limit(500);
+      } else {
+        query = query.limit(2000);
+      }
+
+      const { data, error } = await query;
+      if (error) throw error;
+      return data ?? [];
+    },
+  });
+
+  const decisions = chronikQuery.data ?? [];
+
+  // Group by date
+  const dailyGroups = useMemo(() => {
+    const groups: Record<string, any[]> = {};
+    for (const d of decisions) {
+      const day = d.decision_timestamp
+        ? new Date(d.decision_timestamp).toISOString().slice(0, 10)
+        : "unknown";
+      if (!groups[day]) groups[day] = [];
+      groups[day].push(d);
+    }
+    return Object.entries(groups)
+      .sort(([a], [b]) => b.localeCompare(a))
+      .map(([date, items]) => ({
+        date,
+        decisions: items.sort((a: any, b: any) => (b.confidence_score ?? 0) - (a.confidence_score ?? 0)),
+      }));
+  }, [decisions]);
+
+  const toggleDay = (day: string) => {
+    setExpandedDays((prev) => {
+      const next = new Set(prev);
+      if (next.has(day)) next.delete(day);
+      else next.add(day);
+      return next;
+    });
+  };
+
+  const toggleRow = (key: string) => {
+    setExpandedRows((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  };
+
+  return (
+    <div className="card-elevated rounded-xl border border-border/50 p-4 space-y-4">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <FileText className="h-4 w-4 text-primary" />
+          <h2 className="font-display text-sm font-semibold text-foreground">
+            Analyse-Chronik — Tägliche Empfehlungen
+          </h2>
+        </div>
+        <div className="flex items-center gap-2">
+          <Select value={chronikSymbol} onValueChange={setChronikSymbol}>
+            <SelectTrigger className="w-36 h-8 text-xs">
+              <SelectValue placeholder="Symbol" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="ALL">Alle Symbole</SelectItem>
+              {symbols.map((s) => (
+                <SelectItem key={s} value={s}>{s}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <span className="text-[10px] text-muted-foreground">
+            {decisions.length} Analysen
+          </span>
+        </div>
+      </div>
+
+      {chronikQuery.isLoading && (
+        <div className="flex items-center justify-center py-8">
+          <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+        </div>
+      )}
+
+      {!chronikQuery.isLoading && dailyGroups.length === 0 && (
+        <div className="text-center py-8 text-sm text-muted-foreground">
+          Noch keine Analysen vorhanden. Starte eine Pipeline, um Empfehlungen zu generieren.
+        </div>
+      )}
+
+      <div className="space-y-2 max-h-[600px] overflow-y-auto">
+        {dailyGroups.map(({ date, decisions: dayDecisions }) => {
+          const isDayOpen = expandedDays.has(date);
+          const longCount = dayDecisions.filter((d: any) => d.action_type === "LONG").length;
+          const shortCount = dayDecisions.filter((d: any) => d.action_type === "SHORT").length;
+          const cashCount = dayDecisions.filter((d: any) => d.action_type === "CASH").length;
+          const avgConf = dayDecisions.reduce((s: number, d: any) => s + (d.confidence_score ?? 0), 0) / dayDecisions.length;
+          const formattedDate = date !== "unknown"
+            ? new Date(date + "T00:00:00").toLocaleDateString("de-DE", { weekday: "long", day: "2-digit", month: "long", year: "numeric" })
+            : "Unbekannt";
+
+          return (
+            <div key={date} className="rounded-lg border border-border/30 overflow-hidden">
+              <button
+                onClick={() => toggleDay(date)}
+                className="w-full flex items-center justify-between px-3 py-2.5 hover:bg-muted/20 transition-colors"
+              >
+                <div className="flex items-center gap-2">
+                  {isDayOpen ? <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" /> : <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" />}
+                  <span className="text-xs font-semibold text-foreground">{formattedDate}</span>
+                  <span className="text-[10px] text-muted-foreground">({dayDecisions.length} Symbole)</span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  {longCount > 0 && <Badge variant="outline" className="text-[9px] py-0 h-5 bg-bullish/15 text-bullish border-bullish/30">{longCount} LONG</Badge>}
+                  {shortCount > 0 && <Badge variant="outline" className="text-[9px] py-0 h-5 bg-bearish/15 text-bearish border-bearish/30">{shortCount} SHORT</Badge>}
+                  {cashCount > 0 && <Badge variant="outline" className="text-[9px] py-0 h-5 bg-neutral/15 text-neutral border-neutral/30">{cashCount} CASH</Badge>}
+                  <span className="text-[10px] font-mono text-muted-foreground ml-1">⌀ {avgConf.toFixed(0)}%</span>
+                </div>
+              </button>
+
+              {isDayOpen && (
+                <div className="border-t border-border/20 divide-y divide-border/10">
+                  {dayDecisions.map((d: any, i: number) => {
+                    const rowKey = `chronik-${date}-${d.decision_id ?? i}`;
+                    const isOpen = expandedRows.has(rowKey);
+                    const grade = getGrade(d.confidence_score ?? 0);
+                    const isActionable = d.action_type === "LONG" || d.action_type === "SHORT";
+
+                    return (
+                      <div key={rowKey}>
+                        {/* Summary row */}
+                        <button
+                          onClick={() => toggleRow(rowKey)}
+                          className={`w-full flex items-center gap-3 px-3 py-2 text-xs transition-colors ${isOpen ? "bg-muted/30" : "hover:bg-muted/10"}`}
+                        >
+                          {isOpen ? <ChevronDown className="h-3 w-3 text-muted-foreground shrink-0" /> : <ChevronRight className="h-3 w-3 text-muted-foreground shrink-0" />}
+                          <span className="font-mono font-bold text-foreground w-16 text-left">{d.symbol}</span>
+                          <Badge variant="outline" className={`text-[9px] font-bold ${getActionBadgeClass(d.action_type)}`}>
+                            {d.action_type}
+                          </Badge>
+                          <span className="font-mono text-foreground">{d.confidence_score ?? 0}% <span className="text-muted-foreground">({grade})</span></span>
+                          {d.entry_price && <span className="text-muted-foreground font-mono ml-auto">Entry ${Number(d.entry_price).toFixed(2)}</span>}
+                          {isActionable && (
+                            <span
+                              className={`text-[10px] font-semibold ${d.action_type === "LONG" ? "text-bullish" : "text-bearish"}`}
+                              onClick={(e) => { e.stopPropagation(); navigate(`/symbol/${d.symbol}`); }}
+                            >
+                              → Trade
+                            </span>
+                          )}
+                        </button>
+
+                        {/* Expanded detail with full recommendation */}
+                        {isOpen && (
+                          <div className="px-4 pb-3 pt-1 space-y-3 bg-muted/10">
+                            {/* AI Recommendation in full text */}
+                            {d.reasoning && (
+                              <div className="rounded-lg border border-primary/20 bg-primary/5 p-3">
+                                <div className="flex items-center gap-1.5 mb-1.5">
+                                  <FileText className="h-3.5 w-3.5 text-primary" />
+                                  <span className="text-[10px] font-semibold text-primary uppercase tracking-wider">Empfehlung & Begründung</span>
+                                </div>
+                                <p className="text-xs text-foreground leading-relaxed whitespace-pre-wrap">
+                                  {d.reasoning}
+                                </p>
+                              </div>
+                            )}
+
+                            {/* Klartext-Zusammenfassung */}
+                            <div className="rounded-lg border border-border/30 bg-background/50 p-3">
+                              <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider block mb-1.5">Zusammenfassung</span>
+                              <p className="text-xs text-foreground leading-relaxed">
+                                <strong>{d.symbol}</strong> wird am{" "}
+                                {d.decision_timestamp
+                                  ? new Date(d.decision_timestamp).toLocaleDateString("de-DE", { day: "2-digit", month: "long", year: "numeric" })
+                                  : "—"}{" "}
+                                mit <strong>{d.action_type}</strong> bewertet (Konfidenz: <strong>{d.confidence_score}%</strong>, Grade: <strong>{grade}</strong>).
+                                {d.action_type === "LONG" && d.entry_price && (
+                                  <> Einstieg bei <strong>${Number(d.entry_price).toFixed(2)}</strong>{d.stop_loss ? <>, Stop-Loss bei <strong className="text-bearish">${Number(d.stop_loss).toFixed(2)}</strong></> : null}{d.take_profit_1 ? <>, erstes Kursziel bei <strong className="text-bullish">${Number(d.take_profit_1).toFixed(2)}</strong></> : null}.</>
+                                )}
+                                {d.action_type === "SHORT" && d.entry_price && (
+                                  <> Short-Einstieg bei <strong>${Number(d.entry_price).toFixed(2)}</strong>{d.stop_loss ? <>, Stop-Loss bei <strong className="text-bearish">${Number(d.stop_loss).toFixed(2)}</strong></> : null}{d.take_profit_1 ? <>, Kursziel bei <strong className="text-bullish">${Number(d.take_profit_1).toFixed(2)}</strong></> : null}.</>
+                                )}
+                                {d.action_type === "CASH" && " Keine Handelsempfehlung — abwarten empfohlen."}
+                                {d.croc_status && <> CROC-Status: <strong>{d.croc_status}</strong>.</>}
+                                {d.ice_signals_active != null && <> ICE-Signale: <strong>{d.ice_signals_active ? "aktiv" : "inaktiv"}</strong>.</>}
+                              </p>
+                            </div>
+
+                            {/* Price levels */}
+                            {(d.entry_price || d.stop_loss || d.take_profit_1) && (
+                              <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
+                                {d.entry_price && (
+                                  <div className="flex items-center gap-1.5 rounded-md border border-border/30 px-2.5 py-1.5 bg-background/50">
+                                    <Target className="h-3 w-3 text-primary" />
+                                    <div>
+                                      <span className="block text-[9px] text-muted-foreground">Entry</span>
+                                      <span className="font-mono text-xs font-semibold text-foreground">${Number(d.entry_price).toFixed(2)}</span>
+                                    </div>
+                                  </div>
+                                )}
+                                {d.stop_loss && (
+                                  <div className="flex items-center gap-1.5 rounded-md border border-bearish/20 px-2.5 py-1.5 bg-bearish/5">
+                                    <ShieldAlert className="h-3 w-3 text-bearish" />
+                                    <div>
+                                      <span className="block text-[9px] text-bearish">Stop</span>
+                                      <span className="font-mono text-xs font-semibold text-bearish">${Number(d.stop_loss).toFixed(2)}</span>
+                                    </div>
+                                  </div>
+                                )}
+                                {d.take_profit_1 && (
+                                  <div className="flex items-center gap-1.5 rounded-md border border-bullish/20 px-2.5 py-1.5 bg-bullish/5">
+                                    <TrendingUp className="h-3 w-3 text-bullish" />
+                                    <div>
+                                      <span className="block text-[9px] text-bullish">TP1</span>
+                                      <span className="font-mono text-xs font-semibold text-bullish">${Number(d.take_profit_1).toFixed(2)}</span>
+                                    </div>
+                                  </div>
+                                )}
+                                {d.take_profit_2 && (
+                                  <div className="flex items-center gap-1.5 rounded-md border border-bullish/20 px-2.5 py-1.5 bg-bullish/5">
+                                    <TrendingUp className="h-3 w-3 text-bullish" />
+                                    <div>
+                                      <span className="block text-[9px] text-bullish">TP2</span>
+                                      <span className="font-mono text-xs font-semibold text-bullish">${Number(d.take_profit_2).toFixed(2)}</span>
+                                    </div>
+                                  </div>
+                                )}
+                                {d.take_profit_3 && (
+                                  <div className="flex items-center gap-1.5 rounded-md border border-bullish/20 px-2.5 py-1.5 bg-bullish/5">
+                                    <TrendingUp className="h-3 w-3 text-bullish" />
+                                    <div>
+                                      <span className="block text-[9px] text-bullish">TP3</span>
+                                      <span className="font-mono text-xs font-semibold text-bullish">${Number(d.take_profit_3).toFixed(2)}</span>
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+                            )}
+
+                            {/* 4-Strand scores compact */}
+                            <div className="grid grid-cols-4 gap-2">
+                              {[
+                                { label: "S1 Tech", long: d.strand1_long_score, short: d.strand1_short_score },
+                                { label: "S2 Elliott", long: d.strand2_confidence, short: null },
+                                { label: "S3 Volume", long: d.strand3_long_score, short: d.strand3_short_score },
+                                { label: "S4 CROC", long: d.strand4_long_score, short: d.strand4_short_score },
+                              ].map(({ label, long: l, short: s }) => (
+                                <div key={label} className="rounded-md border border-border/20 bg-background/50 p-2">
+                                  <span className="block text-[9px] text-muted-foreground">{label}</span>
+                                  <div className="flex gap-2 mt-0.5">
+                                    {l != null && <span className="font-mono text-[10px] text-bullish">L:{Number(l).toFixed(0)}</span>}
+                                    {s != null && <span className="font-mono text-[10px] text-bearish">S:{Number(s).toFixed(0)}</span>}
+                                    {l == null && s == null && <span className="font-mono text-[10px] text-muted-foreground">—</span>}
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }
