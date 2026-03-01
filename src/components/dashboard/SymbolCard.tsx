@@ -148,12 +148,54 @@ export default function SymbolCard({ data }: { data: SymbolCardData }) {
             </div>
           </div>
         </TooltipTrigger>
-        {reasoning && (
-          <TooltipContent side="bottom" className="max-w-xs">
-            <p className="text-xs font-medium mb-1">AI-Analyse:</p>
-            <p className="text-xs text-muted-foreground line-clamp-3">{reasoning}</p>
-          </TooltipContent>
-        )}
+        <TooltipContent side="bottom" className="max-w-sm p-3">
+          {/* Action + Confidence header */}
+          <div className="flex items-center justify-between mb-2">
+            <ActionBadge action={actionType} grade={grade} />
+            {confidenceScore != null && (
+              <span className="font-mono text-xs font-bold text-foreground">{confidenceScore.toFixed(0)}% Konfidenz</span>
+            )}
+          </div>
+
+          {/* 4-Strand mini-grid */}
+          <div className="grid grid-cols-4 gap-1 mb-2 text-center">
+            {[
+              { label: "S1 Tech", value: s1 },
+              { label: "S2 Elliott", value: strand2Confidence },
+              { label: "S3 Vol", value: s3 },
+              { label: "S4 Croc", value: s4 },
+            ].map((s) => (
+              <div key={s.label} className="rounded bg-muted/50 px-1 py-0.5">
+                <div className="text-[9px] text-muted-foreground">{s.label}</div>
+                <div className={cn(
+                  "text-xs font-mono font-bold",
+                  (s.value ?? 0) >= 60 ? "text-bullish" : (s.value ?? 0) <= 30 ? "text-bearish" : "text-foreground"
+                )}>
+                  {s.value?.toFixed(0) ?? "—"}
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* CROC + ICE summary */}
+          <div className="flex items-center gap-3 mb-2 text-[10px] text-muted-foreground">
+            <span>CROC: <span className={crocStatus === 1 ? "text-bullish font-semibold" : crocStatus === -1 ? "text-bearish font-semibold" : "text-neutral"}>
+              {crocStatus === 1 ? "BULL" : crocStatus === -1 ? "BEAR" : "NEUTRAL"}
+            </span></span>
+            {activeIceSignals > 0 && (
+              <span>ICE: <span className="text-bullish">{bullSignals}↑</span> / <span className="text-bearish">{bearSignals}↓</span></span>
+            )}
+            {analysisAge && <span className="ml-auto">{analysisAge}</span>}
+          </div>
+
+          {/* Reasoning */}
+          {reasoning && (
+            <div className="border-t border-border/30 pt-1.5">
+              <p className="text-[10px] font-medium text-foreground mb-0.5">Empfehlung:</p>
+              <p className="text-[10px] text-muted-foreground leading-relaxed">{reasoning}</p>
+            </div>
+          )}
+        </TooltipContent>
       </Tooltip>
     </TooltipProvider>
   );
