@@ -45,6 +45,8 @@ import {
 import { useDemoAccount } from "@/hooks/useDemoAccount";
 import { useBalanceSnapshots } from "@/hooks/useBalanceSnapshots";
 import { useClosedPositions } from "@/hooks/useClosedPositions";
+import { useAccountContext } from "@/contexts/AccountContext";
+import { useProfitFactor } from "@/hooks/useProfitFactor";
 import MonthlyReturnsHeatmap from "@/components/portfolio/MonthlyReturnsHeatmap";
 import SetupPerformance from "@/components/portfolio/SetupPerformance";
 import ExitReasonChart from "@/components/portfolio/ExitReasonChart";
@@ -52,8 +54,7 @@ import DrawdownChart from "@/components/portfolio/DrawdownChart";
 import SymbolRanking from "@/components/portfolio/SymbolRanking";
 import { cn } from "@/lib/utils";
 
-const BACKTEST_ACCOUNT_ID = 2;
-const INITIAL_BALANCE = 100_000;
+const DEFAULT_INITIAL_BALANCE = 100_000;
 
 const fmt = (v: number | null | undefined, prefix = "$") =>
   v != null ? `${prefix}${Number(v).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "\u2014";
@@ -97,8 +98,8 @@ function OverviewCard({
 // ────────────────────────────────────────────
 // Equity Curve (Backtest-specific)
 // ────────────────────────────────────────────
-function BacktestEquityCurve() {
-  const { snapshots, isLoading } = useBalanceSnapshots(BACKTEST_ACCOUNT_ID);
+function BacktestEquityCurve({ backtestId }: { backtestId: number }) {
+  const { snapshots, isLoading } = useBalanceSnapshots(backtestId);
 
   const chartData = useMemo(
     () =>
@@ -159,7 +160,7 @@ function BacktestEquityCurve() {
               formatter={(value: number) => [`$${value.toLocaleString("en-US", { minimumFractionDigits: 2 })}`, "Kontostand"]}
             />
             <ReferenceLine
-              y={INITIAL_BALANCE}
+              y={DEFAULT_INITIAL_BALANCE}
               stroke="hsl(215, 12%, 35%)"
               strokeDasharray="6 4"
               label={{ value: "$100k", position: "insideTopRight", fill: "hsl(215, 12%, 55%)", fontSize: 10 }}
@@ -181,8 +182,8 @@ function BacktestEquityCurve() {
 // ────────────────────────────────────────────
 // Trade List Table
 // ────────────────────────────────────────────
-function TradeListTable() {
-  const { positions, isLoading, totalCount, page, setPage } = useClosedPositions(BACKTEST_ACCOUNT_ID);
+function TradeListTable({ backtestId }: { backtestId: number }) {
+  const { positions, isLoading, totalCount, page, setPage } = useClosedPositions(backtestId);
   const [dirFilter, setDirFilter] = useState<"ALL" | "LONG" | "SHORT">("ALL");
   const totalPages = Math.ceil(totalCount / 20);
 
@@ -352,7 +353,12 @@ function TradeListTable() {
 // Main Backtest Report Page
 // ────────────────────────────────────────────
 export default function BacktestReport() {
-  const { account, isLoading } = useDemoAccount(BACKTEST_ACCOUNT_ID);
+  const { accountId, accountInfo } = useAccountContext();
+  // If on live account (1), default to V6 Backtest (2)
+  const backtestId = accountId === 1 ? 2 : accountId;
+  const { account, isLoading } = useDemoAccount(backtestId);
+
+  const initialBalance = account?.initial_balance ?? DEFAULT_INITIAL_BALANCE;
 
   const winRate =
     account && account.total_trades > 0
@@ -360,7 +366,10 @@ export default function BacktestReport() {
       : "0.0";
 
   const totalReturn =
-    account ? ((account.current_balance - INITIAL_BALANCE) / INITIAL_BALANCE * 100).toFixed(1) : "0.0";
+    account ? ((account.current_balance - initialBalance) / initialBalance * 100).toFixed(1) : "0.0";
+
+  const pfData = useProfitFactor(backtestId);
+  const profitFactor = pfData.profitFactor;
 
   return (
     <div className="space-y-6">
@@ -380,7 +389,7 @@ export default function BacktestReport() {
               Backtest Report
             </h1>
             <p className="text-xs text-muted-foreground">
-              Historischer Backtest: Januar 2025 — Februar 2026
+              {accountInfo.label} — {accountInfo.description}
             </p>
           </div>
         </div>
@@ -438,11 +447,11 @@ export default function BacktestReport() {
           />
           <OverviewCard
             title="Profit Factor"
-            value={account && account.winning_trades > 0 && account.losing_trades > 0
-              ? "2.62"
+            value={profitFactor != null
+              ? profitFactor === Infinity ? "∞" : profitFactor.toFixed(2)
               : "—"}
             icon={TrendingUp}
-            trend="up"
+            trend={profitFactor != null && profitFactor > 1 ? "up" : profitFactor != null ? "down" : "neutral"}
           />
         </motion.div>
       )}
@@ -453,7 +462,7 @@ export default function BacktestReport() {
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.3, delay: 0.2 }}
       >
-        <BacktestEquityCurve />
+        <BacktestEquityCurve backtestId={backtestId} />
       </motion.div>
 
       {/* Monthly Returns + Drawdown */}
@@ -463,8 +472,8 @@ export default function BacktestReport() {
         transition={{ duration: 0.3, delay: 0.3 }}
         className="grid grid-cols-1 lg:grid-cols-2 gap-6"
       >
-        <MonthlyReturnsHeatmap accountId={BACKTEST_ACCOUNT_ID} />
-        <DrawdownChart accountId={BACKTEST_ACCOUNT_ID} />
+        <MonthlyReturnsHeatmap accountId={backtestId} />
+        <DrawdownChart accountId={backtestId} />
       </motion.div>
 
       {/* Setup Performance + Exit Analysis */}
@@ -474,8 +483,8 @@ export default function BacktestReport() {
         transition={{ duration: 0.3, delay: 0.35 }}
         className="grid grid-cols-1 lg:grid-cols-2 gap-6"
       >
-        <SetupPerformance accountId={BACKTEST_ACCOUNT_ID} />
-        <ExitReasonChart accountId={BACKTEST_ACCOUNT_ID} />
+        <SetupPerformance accountId={backtestId} />
+        <ExitReasonChart accountId={backtestId} />
       </motion.div>
 
       {/* Symbol Ranking */}
@@ -484,7 +493,7 @@ export default function BacktestReport() {
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.3, delay: 0.4 }}
       >
-        <SymbolRanking accountId={BACKTEST_ACCOUNT_ID} />
+        <SymbolRanking accountId={backtestId} />
       </motion.div>
 
       {/* Trade List */}
@@ -493,7 +502,7 @@ export default function BacktestReport() {
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.3, delay: 0.45 }}
       >
-        <TradeListTable />
+        <TradeListTable backtestId={backtestId} />
       </motion.div>
     </div>
   );
