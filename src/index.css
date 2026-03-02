@@ -53,6 +53,17 @@
     --chart-up: 142 71% 45%;
     --chart-down: 0 84% 60%;
     --shadow-card: 0 4px 24px hsl(0 0% 0% / 0.3);
+
+    /* V8 tokens */
+    --gold: 48 100% 50%;
+    --surface-elevated: 240 8% 9%;
+
+    --background: 240 10% 4%;
+    --card: 240 8% 7%;
+    --sidebar-background: 240 10% 3%;
+    --radius: 0.5rem;
+    --bullish: 160 100% 42%;
+    --bearish: 0 100% 63%;
   }
 }
 
@@ -85,5 +96,21 @@
 
   .font-mono {
     font-family: 'JetBrains Mono', monospace;
+  }
+
+  .text-bullish {
+    color: hsl(var(--bullish));
+  }
+
+  .text-bearish {
+    color: hsl(var(--bearish));
+  }
+
+  .text-gold {
+    color: hsl(var(--gold));
+  }
+
+  .bg-surface-elevated {
+    background-color: hsl(var(--surface-elevated));
   }
 }

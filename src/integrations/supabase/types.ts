@@ -3561,6 +3561,10 @@ export type Database = {
           isSetofReturn: false
         }
       }
+      evaluate_v7_performance: {
+        Args: { p_account_id?: number; p_mode?: string }
+        Returns: Json
+      }
       execute_demo_trade: {
         Args: {
           p_account_id: number
@@ -3729,6 +3733,17 @@ export type Database = {
           updated_symbol: string
         }[]
       }
+      run_backtest_v7_chunk: { Args: { p_chunk_days?: number }; Returns: Json }
+      run_combined_v6v7_backtest: {
+        Args: {
+          p_max_positions?: number
+          p_max_v7_score?: number
+          p_min_score_long?: number
+          p_min_score_short?: number
+          p_use_v7_exits?: boolean
+        }
+        Returns: Json
+      }
       run_historical_backtest: {
         Args: {
           p_account_id?: number
@@ -3740,6 +3755,15 @@ export type Database = {
           p_risk_per_trade?: number
           p_start_date?: string
           p_trailing_pct?: number
+        }
+        Returns: Json
+      }
+      run_historical_backtest_v7: {
+        Args: {
+          p_end_date?: string
+          p_initial_balance?: number
+          p_max_positions?: number
+          p_start_date?: string
         }
         Returns: Json
       }

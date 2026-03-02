@@ -14,14 +14,28 @@ const ACCOUNTS: Record<number, AccountInfo> = {
     id: 1,
     label: "Live Demo",
     description: "Aktives Demo-Depot",
-    color: "hsl(142, 76%, 36%)", // green
+    color: "hsl(142, 76%, 36%)",
     isReadOnly: false,
   },
   2: {
     id: 2,
-    label: "Backtest 2025",
-    description: "Historischer Backtest ab 01/2025",
-    color: "hsl(217, 91%, 60%)", // blue
+    label: "V6 Backtest",
+    description: "Historischer Backtest V6",
+    color: "hsl(217, 91%, 60%)",
+    isReadOnly: true,
+  },
+  3: {
+    id: 3,
+    label: "V7 Backtest",
+    description: "Historischer Backtest V7",
+    color: "hsl(270, 60%, 60%)",
+    isReadOnly: true,
+  },
+  4: {
+    id: 4,
+    label: "Combined V8",
+    description: "V8 Gold Combined",
+    color: "hsl(48, 100%, 50%)",
     isReadOnly: true,
   },
 };
@@ -76,6 +90,7 @@ export function AccountProvider({ children }: { children: React.ReactNode }) {
       queryClient.invalidateQueries({ queryKey: ["monthly-returns"] });
       queryClient.invalidateQueries({ queryKey: ["setup-performance"] });
       queryClient.invalidateQueries({ queryKey: ["exit-reason-analysis"] });
+      queryClient.invalidateQueries({ queryKey: ["profit-factor"] });
     },
     [queryClient]
   );
@@ -89,7 +104,7 @@ export function AccountProvider({ children }: { children: React.ReactNode }) {
         accountInfo,
         accounts: ACCOUNTS,
         setAccountId,
-        isBacktest: accountId === 2,
+        isBacktest: accountId !== 1,
         isReadOnly: accountInfo.isReadOnly,
       }}
     >

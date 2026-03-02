@@ -69,6 +69,8 @@ export default {
         bullish: "hsl(var(--bullish))",
         bearish: "hsl(var(--bearish))",
         neutral: "hsl(var(--neutral))",
+        gold: "hsl(var(--gold))",
+        "surface-elevated": "hsl(var(--surface-elevated))",
       },
       borderRadius: {
         lg: "var(--radius)",

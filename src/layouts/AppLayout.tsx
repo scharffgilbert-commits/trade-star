@@ -20,7 +20,7 @@ export default function AppLayout() {
       />
       <div className="pl-16 md:pl-56">
         <GlobalTickerBar />
-        <main className="p-6">
+        <main className="p-4">
           <Outlet />
         </main>
       </div>

@@ -9,6 +9,7 @@ import PerformanceComparison from "@/components/dashboard/PerformanceComparison"
 import MarketRegimeHeatmap from "@/components/dashboard/MarketRegimeHeatmap";
 import UpcomingEvents from "@/components/dashboard/UpcomingEvents";
 import ActiveSetupsWidget from "@/components/dashboard/ActiveSetupsWidget";
+import CombinedModeWidget from "@/components/dashboard/CombinedModeWidget";
 import { Skeleton } from "@/components/ui/skeleton";
 
 export default function Dashboard() {
@@ -20,34 +21,37 @@ export default function Dashboard() {
     : cardData.filter((d) => d.actionType === filter);
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-3">
       <DashboardHeader />
 
       {/* Portfolio Summary Strip */}
       <PortfolioSummaryStrip />
 
-      {/* Performance Comparison: Live vs Backtest */}
+      {/* Combined Mode Widget */}
+      <CombinedModeWidget />
+
+      {/* Performance Comparison: Live vs V6 vs Combined */}
       <PerformanceComparison />
 
       {/* Market Regime Heatmap + Upcoming Events */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
         <MarketRegimeHeatmap />
         <UpcomingEvents />
       </div>
 
       {/* Main Content Grid */}
-      <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-4 gap-3">
         {/* Symbol Cards */}
         <div className="lg:col-span-3">
           <FilterButtons active={filter} onChange={setFilter} />
           {isLoading ? (
-            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
               {Array.from({ length: 8 }).map((_, i) => (
-                <Skeleton key={i} className="h-52 rounded-xl" />
+                <Skeleton key={i} className="h-48 rounded-lg" />
               ))}
             </div>
           ) : (
-            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
               {filtered.map((d) => (
                 <SymbolCard key={d.symbol} data={d} />
               ))}
@@ -56,7 +60,7 @@ export default function Dashboard() {
         </div>
 
         {/* Sidebar */}
-        <div className="space-y-4">
+        <div className="space-y-3">
           <TopSignals data={cardData} />
           <ActiveSetupsWidget />
         </div>

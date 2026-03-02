@@ -1,11 +1,11 @@
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
-import { Wallet, TrendingUp, BarChart3, Target, TrendingDown } from "lucide-react";
-import { cn } from "@/lib/utils";
 import { useAccountContext } from "@/contexts/AccountContext";
+import { useProfitFactor } from "@/hooks/useProfitFactor";
 
 export default function PortfolioSummaryStrip() {
   const { accountId, accountInfo } = useAccountContext();
+  const { profitFactor, longPnl, shortPnl } = useProfitFactor(accountId);
 
   const { data: account } = useQuery({
     queryKey: ["demo-account-strip", accountId],
@@ -45,49 +45,69 @@ export default function PortfolioSummaryStrip() {
       : "--";
   const dd = Number(account.max_drawdown_percent).toFixed(1);
 
+  const metrics = [
+    {
+      label: accountInfo.label,
+      value: `$${Number(account.current_balance).toLocaleString("en-US", { minimumFractionDigits: 0 })}`,
+      color: "text-foreground",
+      dot: accountInfo.color,
+    },
+    {
+      label: "P&L",
+      value: `${pnl >= 0 ? "+" : ""}$${pnl.toFixed(0)} (${pnlPct >= 0 ? "+" : ""}${pnlPct.toFixed(2)}%)`,
+      color: pnl >= 0 ? "text-bullish" : "text-bearish",
+    },
+    {
+      label: "L",
+      value: `${longPnl >= 0 ? "+" : ""}$${longPnl.toFixed(0)}`,
+      color: longPnl >= 0 ? "text-bullish" : "text-bearish",
+    },
+    {
+      label: "S",
+      value: `${shortPnl >= 0 ? "+" : ""}$${shortPnl.toFixed(0)}`,
+      color: shortPnl >= 0 ? "text-bullish" : "text-bearish",
+    },
+    {
+      label: "Offen",
+      value: `${openCount ?? 0}`,
+      color: "text-foreground",
+    },
+    {
+      label: "Win",
+      value: `${winRate}%`,
+      color: "text-foreground",
+    },
+    {
+      label: "DD",
+      value: `${dd}%`,
+      color: "text-foreground",
+    },
+    {
+      label: "PF",
+      value: profitFactor !== null ? (profitFactor === Infinity ? "∞" : profitFactor.toFixed(2)) : "--",
+      color: (profitFactor ?? 0) >= 1.5 ? "text-bullish" : "text-foreground",
+    },
+  ];
+
   return (
-    <div className="flex items-center gap-6 px-4 py-2 rounded-lg bg-card/50 border border-border/30 text-sm overflow-x-auto">
-      <div className="flex items-center gap-1.5 whitespace-nowrap">
-        <span
-          className="h-2 w-2 rounded-full shrink-0"
-          style={{ backgroundColor: accountInfo.color }}
-        />
-        <span className="text-muted-foreground">{accountInfo.label}:</span>
-        <span className="font-mono font-semibold text-foreground">
-          ${Number(account.current_balance).toLocaleString("en-US", { minimumFractionDigits: 0 })}
-        </span>
-      </div>
-
-      <div className="flex items-center gap-1.5 whitespace-nowrap">
-        <TrendingUp className="h-3.5 w-3.5 text-muted-foreground" />
-        <span className="text-muted-foreground">P&L:</span>
-        <span
-          className={cn(
-            "font-mono font-semibold",
-            pnl >= 0 ? "text-green-400" : "text-red-400"
+    <div className="flex items-center gap-0 px-3 py-2 rounded-md bg-card/50 border border-border/30 text-xs overflow-x-auto">
+      {metrics.map((m, i) => (
+        <div key={m.label} className="flex items-center">
+          {i > 0 && (
+            <span className="text-muted-foreground/40 mx-2 select-none">|</span>
           )}
-        >
-          {pnl >= 0 ? "+" : ""}${pnl.toFixed(0)} ({pnlPct >= 0 ? "+" : ""}{pnlPct.toFixed(2)}%)
-        </span>
-      </div>
-
-      <div className="flex items-center gap-1.5 whitespace-nowrap">
-        <BarChart3 className="h-3.5 w-3.5 text-muted-foreground" />
-        <span className="text-muted-foreground">Offen:</span>
-        <span className="font-mono font-semibold text-foreground">{openCount ?? 0}</span>
-      </div>
-
-      <div className="flex items-center gap-1.5 whitespace-nowrap">
-        <Target className="h-3.5 w-3.5 text-muted-foreground" />
-        <span className="text-muted-foreground">Win:</span>
-        <span className="font-mono font-semibold text-foreground">{winRate}%</span>
-      </div>
-
-      <div className="flex items-center gap-1.5 whitespace-nowrap">
-        <TrendingDown className="h-3.5 w-3.5 text-muted-foreground" />
-        <span className="text-muted-foreground">DD:</span>
-        <span className="font-mono font-semibold text-foreground">{dd}%</span>
-      </div>
+          <div className="flex items-center gap-1 whitespace-nowrap">
+            {m.dot && (
+              <span
+                className="h-2 w-2 rounded-full shrink-0"
+                style={{ backgroundColor: m.dot }}
+              />
+            )}
+            <span className="text-muted-foreground">{m.label}:</span>
+            <span className={`font-mono font-semibold ${m.color}`}>{m.value}</span>
+          </div>
+        </div>
+      ))}
     </div>
   );
 }
