@@ -2,6 +2,7 @@ import { useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useMarketStatus } from "@/hooks/useMarketStatus";
+import { useState, useEffect } from "react";
 
 interface TickerItem {
   symbol: string;
@@ -12,11 +13,18 @@ interface TickerItem {
 export default function GlobalTickerBar() {
   const navigate = useNavigate();
   const { statusText, statusColor } = useMarketStatus();
+  const [utcTime, setUtcTime] = useState(() => new Date().toISOString().slice(11, 19));
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setUtcTime(new Date().toISOString().slice(11, 19));
+    }, 1000);
+    return () => clearInterval(interval);
+  }, []);
 
   const { data: items = [] } = useQuery<TickerItem[]>({
     queryKey: ["ticker-bar"],
     queryFn: async () => {
-      // Use v_dashboard_cards which already has price + change data
       const { data, error } = await (supabase as any)
         .from("v_dashboard_cards")
         .select("symbol, current_price, price_change_pct");
@@ -37,13 +45,12 @@ export default function GlobalTickerBar() {
 
   if (items.length === 0) return null;
 
-  // Duplicate items for seamless infinite scroll
   const doubled = [...items, ...items];
 
   return (
-    <div className="sticky top-0 z-40 h-8 bg-sidebar border-b border-sidebar-border overflow-hidden flex items-center">
+    <div className="sticky top-0 z-40 h-7 bg-sidebar border-b border-sidebar-border overflow-hidden flex items-center">
       {/* Market status indicator */}
-      <div className="shrink-0 flex items-center gap-1.5 px-3 border-r border-sidebar-border h-full">
+      <div className="shrink-0 flex items-center gap-1.5 px-2 border-r border-sidebar-border h-full">
         <div
           className={`h-1.5 w-1.5 rounded-full ${
             statusColor === "text-bullish"
@@ -60,7 +67,7 @@ export default function GlobalTickerBar() {
 
       {/* Scrolling ticker tape */}
       <div className="flex-1 overflow-hidden relative">
-        <div className="ticker-scroll flex items-center gap-6 whitespace-nowrap">
+        <div className="ticker-scroll flex items-center gap-5 whitespace-nowrap">
           {doubled.map((item, i) => {
             const isPositive = item.change_pct > 0;
             const isNegative = item.change_pct < 0;
@@ -75,12 +82,12 @@ export default function GlobalTickerBar() {
               <button
                 key={`${item.symbol}-${i}`}
                 onClick={() => navigate(`/symbol/${item.symbol}`)}
-                className="inline-flex items-center gap-1.5 hover:opacity-80 transition-opacity cursor-pointer bg-transparent border-none p-0"
+                className="inline-flex items-center gap-1 hover:opacity-80 transition-opacity cursor-pointer bg-transparent border-none p-0"
               >
-                <span className="text-[11px] font-semibold text-foreground">
+                <span className="text-[10px] font-semibold text-foreground">
                   {item.symbol}
                 </span>
-                <span className="text-[11px] font-mono text-muted-foreground">
+                <span className="text-[10px] font-mono text-muted-foreground">
                   ${item.price.toFixed(2)}
                 </span>
                 <span className={`text-[10px] font-mono ${colorClass}`}>
@@ -92,6 +99,11 @@ export default function GlobalTickerBar() {
             );
           })}
         </div>
+      </div>
+
+      {/* UTC Clock */}
+      <div className="shrink-0 px-2 border-l border-sidebar-border h-full flex items-center">
+        <span className="text-[10px] font-mono text-muted-foreground">{utcTime} UTC</span>
       </div>
 
       <style>{`
