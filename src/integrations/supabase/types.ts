@@ -169,6 +169,202 @@ export type Database = {
           },
         ]
       }
+      backtest_runs: {
+        Row: {
+          account_id: number | null
+          avg_holding_days: number | null
+          avg_pnl_per_trade: number | null
+          completed_at: string | null
+          end_date: string
+          error_message: string | null
+          final_balance: number | null
+          id: number
+          initial_balance: number
+          losing_trades: number | null
+          max_drawdown_amount: number | null
+          max_drawdown_pct: number | null
+          monthly_returns: Json | null
+          notes: string | null
+          parameters_snapshot: Json | null
+          profit_factor: number | null
+          run_name: string
+          sharpe_ratio: number | null
+          start_date: string
+          started_at: string | null
+          status: string | null
+          total_pnl: number | null
+          total_trades: number | null
+          v6_comparison: Json | null
+          win_rate: number | null
+          winning_trades: number | null
+        }
+        Insert: {
+          account_id?: number | null
+          avg_holding_days?: number | null
+          avg_pnl_per_trade?: number | null
+          completed_at?: string | null
+          end_date: string
+          error_message?: string | null
+          final_balance?: number | null
+          id?: number
+          initial_balance?: number
+          losing_trades?: number | null
+          max_drawdown_amount?: number | null
+          max_drawdown_pct?: number | null
+          monthly_returns?: Json | null
+          notes?: string | null
+          parameters_snapshot?: Json | null
+          profit_factor?: number | null
+          run_name: string
+          sharpe_ratio?: number | null
+          start_date: string
+          started_at?: string | null
+          status?: string | null
+          total_pnl?: number | null
+          total_trades?: number | null
+          v6_comparison?: Json | null
+          win_rate?: number | null
+          winning_trades?: number | null
+        }
+        Update: {
+          account_id?: number | null
+          avg_holding_days?: number | null
+          avg_pnl_per_trade?: number | null
+          completed_at?: string | null
+          end_date?: string
+          error_message?: string | null
+          final_balance?: number | null
+          id?: number
+          initial_balance?: number
+          losing_trades?: number | null
+          max_drawdown_amount?: number | null
+          max_drawdown_pct?: number | null
+          monthly_returns?: Json | null
+          notes?: string | null
+          parameters_snapshot?: Json | null
+          profit_factor?: number | null
+          run_name?: string
+          sharpe_ratio?: number | null
+          start_date?: string
+          started_at?: string | null
+          status?: string | null
+          total_pnl?: number | null
+          total_trades?: number | null
+          v6_comparison?: Json | null
+          win_rate?: number | null
+          winning_trades?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "backtest_runs_account_id_fkey"
+            columns: ["account_id"]
+            isOneToOne: false
+            referencedRelation: "demo_accounts"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      backtest_trade_audit: {
+        Row: {
+          action: string
+          backtest_run_id: number | null
+          created_at: string | null
+          day2_unrealized_pnl: number | null
+          direction: string
+          entry_price: number | null
+          eval_date: string
+          exit_price: number | null
+          exit_reason: string | null
+          holding_days: number | null
+          id: number
+          pnl_amount: number | null
+          pnl_percent: number | null
+          position_id: number | null
+          position_size_pct: number | null
+          quantity: number | null
+          reasoning: string | null
+          stop_loss: number | null
+          symbol: string
+          take_profit: number | null
+          trailing_pct_final: number | null
+          trailing_pct_initial: number | null
+          v7_confidence_tier: string | null
+          v7_filter_results: Json
+          v7_indicator_values: Json
+          v7_is_tradeable: boolean | null
+          v7_soft_scores: Json
+          v7_total_score: number | null
+        }
+        Insert: {
+          action: string
+          backtest_run_id?: number | null
+          created_at?: string | null
+          day2_unrealized_pnl?: number | null
+          direction: string
+          entry_price?: number | null
+          eval_date: string
+          exit_price?: number | null
+          exit_reason?: string | null
+          holding_days?: number | null
+          id?: number
+          pnl_amount?: number | null
+          pnl_percent?: number | null
+          position_id?: number | null
+          position_size_pct?: number | null
+          quantity?: number | null
+          reasoning?: string | null
+          stop_loss?: number | null
+          symbol: string
+          take_profit?: number | null
+          trailing_pct_final?: number | null
+          trailing_pct_initial?: number | null
+          v7_confidence_tier?: string | null
+          v7_filter_results?: Json
+          v7_indicator_values?: Json
+          v7_is_tradeable?: boolean | null
+          v7_soft_scores?: Json
+          v7_total_score?: number | null
+        }
+        Update: {
+          action?: string
+          backtest_run_id?: number | null
+          created_at?: string | null
+          day2_unrealized_pnl?: number | null
+          direction?: string
+          entry_price?: number | null
+          eval_date?: string
+          exit_price?: number | null
+          exit_reason?: string | null
+          holding_days?: number | null
+          id?: number
+          pnl_amount?: number | null
+          pnl_percent?: number | null
+          position_id?: number | null
+          position_size_pct?: number | null
+          quantity?: number | null
+          reasoning?: string | null
+          stop_loss?: number | null
+          symbol?: string
+          take_profit?: number | null
+          trailing_pct_final?: number | null
+          trailing_pct_initial?: number | null
+          v7_confidence_tier?: string | null
+          v7_filter_results?: Json
+          v7_indicator_values?: Json
+          v7_is_tradeable?: boolean | null
+          v7_soft_scores?: Json
+          v7_total_score?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "backtest_trade_audit_backtest_run_id_fkey"
+            columns: ["backtest_run_id"]
+            isOneToOne: false
+            referencedRelation: "backtest_runs"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       balance_snapshots: {
         Row: {
           account_id: number
@@ -857,6 +1053,71 @@ export type Database = {
           notes?: string | null
         }
         Relationships: []
+      }
+      optimization_audit_log: {
+        Row: {
+          backtest_run_id: number | null
+          change_reason: string
+          confidence_level: number | null
+          created_at: string | null
+          expires_at: string | null
+          id: number
+          new_value: Json | null
+          old_value: Json | null
+          optimization_type: string
+          parameter_name: string
+          profit_factor_before: number | null
+          reverted_at: string | null
+          rollback_value: Json | null
+          sample_size: number | null
+          was_reverted: boolean | null
+          win_rate_before: number | null
+        }
+        Insert: {
+          backtest_run_id?: number | null
+          change_reason: string
+          confidence_level?: number | null
+          created_at?: string | null
+          expires_at?: string | null
+          id?: number
+          new_value?: Json | null
+          old_value?: Json | null
+          optimization_type: string
+          parameter_name: string
+          profit_factor_before?: number | null
+          reverted_at?: string | null
+          rollback_value?: Json | null
+          sample_size?: number | null
+          was_reverted?: boolean | null
+          win_rate_before?: number | null
+        }
+        Update: {
+          backtest_run_id?: number | null
+          change_reason?: string
+          confidence_level?: number | null
+          created_at?: string | null
+          expires_at?: string | null
+          id?: number
+          new_value?: Json | null
+          old_value?: Json | null
+          optimization_type?: string
+          parameter_name?: string
+          profit_factor_before?: number | null
+          reverted_at?: string | null
+          rollback_value?: Json | null
+          sample_size?: number | null
+          was_reverted?: boolean | null
+          win_rate_before?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "optimization_audit_log_backtest_run_id_fkey"
+            columns: ["backtest_run_id"]
+            isOneToOne: false
+            referencedRelation: "backtest_runs"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       premium_signals: {
         Row: {
@@ -2835,6 +3096,48 @@ export type Database = {
           },
         ]
       }
+      v7_rule_parameters: {
+        Row: {
+          auto_tunable: boolean | null
+          created_at: string | null
+          description: string | null
+          id: number
+          max_value: number | null
+          min_value: number | null
+          param_name: string
+          param_type: string
+          param_value: Json
+          step_size: number | null
+          updated_at: string | null
+        }
+        Insert: {
+          auto_tunable?: boolean | null
+          created_at?: string | null
+          description?: string | null
+          id?: number
+          max_value?: number | null
+          min_value?: number | null
+          param_name: string
+          param_type?: string
+          param_value: Json
+          step_size?: number | null
+          updated_at?: string | null
+        }
+        Update: {
+          auto_tunable?: boolean | null
+          created_at?: string | null
+          description?: string | null
+          id?: number
+          max_value?: number | null
+          min_value?: number | null
+          param_name?: string
+          param_type?: string
+          param_value?: Json
+          step_size?: number | null
+          updated_at?: string | null
+        }
+        Relationships: []
+      }
       workflow_runs: {
         Row: {
           completed_at: string | null
@@ -3238,6 +3541,26 @@ export type Database = {
         }[]
       }
       evaluate_strategy_performance: { Args: never; Returns: Json }
+      evaluate_v7_entry: {
+        Args: { p_date: string; p_direction: string; p_symbol: string }
+        Returns: Database["public"]["CompositeTypes"]["v7_entry_evaluation"]
+        SetofOptions: {
+          from: "*"
+          to: "v7_entry_evaluation"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
+      evaluate_v7_exit: {
+        Args: { p_date: string; p_position_id: number }
+        Returns: Database["public"]["CompositeTypes"]["v7_exit_evaluation"]
+        SetofOptions: {
+          from: "*"
+          to: "v7_exit_evaluation"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
       execute_demo_trade: {
         Args: {
           p_account_id: number
@@ -3256,6 +3579,8 @@ export type Database = {
         }
         Returns: Json
       }
+      get_v7_param: { Args: { p_name: string }; Returns: Json }
+      get_v7_param_numeric: { Args: { p_name: string }; Returns: number }
       http: {
         Args: { request: Database["public"]["CompositeTypes"]["http_request"] }
         Returns: Database["public"]["CompositeTypes"]["http_response"]
@@ -3475,6 +3800,48 @@ export type Database = {
         content_type: string | null
         headers: Database["public"]["CompositeTypes"]["http_header"][] | null
         content: string | null
+      }
+      v7_entry_evaluation: {
+        symbol: string | null
+        eval_date: string | null
+        direction: string | null
+        total_score: number | null
+        is_tradeable: boolean | null
+        confidence_tier: string | null
+        f_symbol_allowed: boolean | null
+        f_setup_type_ok: boolean | null
+        f_sar_aligned: boolean | null
+        f_macd_aligned: boolean | null
+        f_croc_score_ok: boolean | null
+        f_bb_position_ok: boolean | null
+        f_ma_alignment_ok: boolean | null
+        f_squeeze_ok: boolean | null
+        s_ice_score: number | null
+        s_donchian_score: number | null
+        s_ichimoku_score: number | null
+        s_volume_score: number | null
+        s_croc_alligator_score: number | null
+        s_adx_score: number | null
+        s_rsi_score: number | null
+        s_day_of_week_penalty: number | null
+        s_month_penalty: number | null
+        recommended_sl: number | null
+        atr_value: number | null
+        sl_atr_multiple: number | null
+        position_size_pct: number | null
+        filter_details: Json | null
+        reasoning: string | null
+      }
+      v7_exit_evaluation: {
+        position_id: number | null
+        eval_date: string | null
+        should_exit: boolean | null
+        exit_reason: string | null
+        exit_price: number | null
+        new_trailing_pct: number | null
+        day_in_trade: number | null
+        unrealized_pnl_pct: number | null
+        reasoning: string | null
       }
     }
   }
