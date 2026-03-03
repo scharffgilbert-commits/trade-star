@@ -71,6 +71,43 @@ Deno.serve(async (req) => {
     const body = await req.json();
     const { action } = body;
 
+    // ── Auth: Frontend-actions require valid JWT + account ownership ──
+    const userActions = ["open", "close", "reset"];
+    if (userActions.includes(action)) {
+      const authHeader = req.headers.get("authorization");
+      if (!authHeader?.startsWith("Bearer ")) {
+        return new Response(
+          JSON.stringify({ error: "Nicht authentifiziert" }),
+          { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+      const anonKey = Deno.env.get("SUPABASE_ANON_KEY") ?? "";
+      const supabaseAuth = createClient(supabaseUrl, anonKey, {
+        global: { headers: { Authorization: authHeader } },
+      });
+      const { data: { user }, error: authError } = await supabaseAuth.auth.getUser();
+      if (authError || !user) {
+        return new Response(
+          JSON.stringify({ error: "Ungueltige Sitzung" }),
+          { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+      // Verify account ownership
+      if (body.account_id) {
+        const { data: acct } = await supabase
+          .from("demo_accounts")
+          .select("user_id")
+          .eq("id", body.account_id)
+          .single();
+        if (!acct || acct.user_id !== user.id) {
+          return new Response(
+            JSON.stringify({ error: "Kein Zugriff auf dieses Konto" }),
+            { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+          );
+        }
+      }
+    }
+
     switch (action) {
       case "auto_trade":
         return await handleAutoTrade(supabase, body);
