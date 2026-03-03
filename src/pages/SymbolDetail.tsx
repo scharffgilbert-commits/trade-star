@@ -161,9 +161,9 @@ export default function SymbolDetail() {
       </div>
 
       {/* Main Content: Chart + Trade Panel */}
-      <div className="grid grid-cols-1 xl:grid-cols-[1fr_340px] gap-3">
-        {/* Left: Chart */}
-        <div className="rounded-lg border border-border/40 bg-card/50 p-3">
+      <div className="grid grid-cols-1 xl:grid-cols-[1fr_340px] gap-3 xl:items-stretch">
+        {/* Left: Chart — stretches to match right panel height */}
+        <div className="rounded-lg border border-border/40 bg-card/50 p-3 min-h-[500px]">
           <TradingViewChart
             symbol={symbol}
             entryPrice={chartOverlay ? Number(chartOverlay.entry_price) : undefined}
