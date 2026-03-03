@@ -238,7 +238,7 @@ function OpenPositionsTab() {
                 <AlertDialogTrigger asChild>
                   <Button variant="ghost" size="sm" className="text-bearish hover:text-bearish hover:bg-bearish/10">
                     <X className="h-4 w-4 mr-1" />
-                    Schlie\u00dfen
+                    Schließen
                   </Button>
                 </AlertDialogTrigger>
                 <AlertDialogContent>
