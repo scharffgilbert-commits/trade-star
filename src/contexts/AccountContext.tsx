@@ -7,6 +7,8 @@ interface AccountInfo {
   description: string;
   color: string;
   isReadOnly: boolean;
+  isCFD?: boolean;
+  currency?: string;
 }
 
 const ACCOUNTS: Record<number, AccountInfo> = {
@@ -37,6 +39,15 @@ const ACCOUNTS: Record<number, AccountInfo> = {
     description: "V8 Gold Combined",
     color: "hsl(48, 100%, 50%)",
     isReadOnly: true,
+  },
+  5: {
+    id: 5,
+    label: "IG Markets CFD",
+    description: "CFD Simulation 20x Hebel, 5.000\u20ac",
+    color: "hsl(30, 100%, 50%)",
+    isReadOnly: false,
+    isCFD: true,
+    currency: "EUR",
   },
 };
 
@@ -104,7 +115,7 @@ export function AccountProvider({ children }: { children: React.ReactNode }) {
         accountInfo,
         accounts: ACCOUNTS,
         setAccountId,
-        isBacktest: accountId !== 1,
+        isBacktest: accountId !== 1 && accountId !== 5,
         isReadOnly: accountInfo.isReadOnly,
       }}
     >

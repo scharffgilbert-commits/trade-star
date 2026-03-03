@@ -1,8 +1,9 @@
 import { NavLink, useLocation } from "react-router-dom";
-import { LayoutDashboard, Play, History, Activity, TrendingUp, Briefcase, PieChart, Search, FlaskConical, Crown } from "lucide-react";
+import { LayoutDashboard, Play, History, Activity, TrendingUp, Briefcase, PieChart, Search, FlaskConical, Crown, LogOut } from "lucide-react";
 import NotificationBell from "@/components/layout/NotificationBell";
 import AccountSwitcher from "@/components/layout/AccountSwitcher";
 import { useMarketStatus } from "@/hooks/useMarketStatus";
+import { useAuth } from "@/contexts/AuthContext";
 import type { Notification } from "@/hooks/useNotifications";
 
 interface AppSidebarProps {
@@ -24,6 +25,7 @@ const navItems = [
 export default function AppSidebar({ notifications = [], unreadCount = 0, onMarkAllRead }: AppSidebarProps) {
   const location = useLocation();
   const { isOpen } = useMarketStatus();
+  const { user, signOut } = useAuth();
 
   return (
     <aside className="fixed left-0 top-0 bottom-0 w-16 md:w-56 bg-sidebar border-r border-sidebar-border z-50 flex flex-col">
@@ -78,6 +80,22 @@ export default function AppSidebar({ notifications = [], unreadCount = 0, onMark
       {/* Account Switcher */}
       <div className="hidden md:block p-3 border-t border-sidebar-border">
         <AccountSwitcher compact />
+      </div>
+
+      {/* User + Logout */}
+      <div className="hidden md:block px-3 py-2 border-t border-sidebar-border">
+        <div className="flex items-center justify-between gap-2">
+          <span className="text-xs text-muted-foreground truncate max-w-[140px]">
+            {user?.email}
+          </span>
+          <button
+            onClick={signOut}
+            className="p-1 rounded hover:bg-sidebar-accent text-muted-foreground hover:text-foreground transition-colors"
+            title="Abmelden"
+          >
+            <LogOut className="h-3.5 w-3.5" />
+          </button>
+        </div>
       </div>
 
       {/* Footer: Shortcuts Hint */}
