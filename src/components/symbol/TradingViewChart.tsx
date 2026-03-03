@@ -41,11 +41,13 @@ export default function TradingViewChart({
   trailingStopPrice,
 }: TradingViewChartProps) {
   const chartContainerRef = useRef<HTMLDivElement>(null);
+  const wrapperRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const candlestickSeriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
   const [selectedRange, setSelectedRange] = useState(90);
   const [chartError, setChartError] = useState<string | null>(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [dynamicHeight, setDynamicHeight] = useState(520);
   const [crosshairData, setCrosshairData] = useState<{
     time?: string;
     open?: number;
@@ -115,7 +117,23 @@ export default function TradingViewChart({
     },
   });
 
-  const chartHeight = isFullscreen ? window.innerHeight - 120 : 520;
+  // Measure wrapper height to fill parent container
+  useEffect(() => {
+    if (!wrapperRef.current) return;
+    const measure = () => {
+      const wrapper = wrapperRef.current;
+      if (!wrapper) return;
+      // toolbar ~28px + legend ~20px + margins ~8px = ~56px overhead
+      const available = wrapper.clientHeight - 56;
+      setDynamicHeight(Math.max(300, available));
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(wrapperRef.current);
+    return () => ro.disconnect();
+  }, []);
+
+  const chartHeight = isFullscreen ? window.innerHeight - 120 : dynamicHeight;
 
   // Create and manage chart
   useEffect(() => {
@@ -406,10 +424,13 @@ export default function TradingViewChart({
   } : null);
 
   return (
-    <div className={cn(
-      "flex flex-col",
-      isFullscreen && "fixed inset-0 z-50 bg-background p-4"
-    )}>
+    <div
+      ref={wrapperRef}
+      className={cn(
+        "flex flex-col h-full",
+        isFullscreen && "fixed inset-0 z-50 bg-background p-4"
+      )}
+    >
       {/* Chart toolbar */}
       <div className="flex items-center justify-between mb-1">
         {/* OHLCV data display */}
@@ -474,8 +495,7 @@ export default function TradingViewChart({
       {/* Chart container */}
       <div
         ref={chartContainerRef}
-        className="w-full rounded-md overflow-hidden"
-        style={{ minHeight: chartHeight }}
+        className="w-full rounded-md overflow-hidden flex-1"
       />
 
       {/* Alligator legend */}
