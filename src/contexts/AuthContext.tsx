@@ -25,8 +25,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
-  // Profil laden (non-blocking, fire-and-forget)
-  const fetchProfile = (userId: string) => {
+  // Profil laden — setzt isLoading=false wenn fertig
+  const fetchProfile = (userId: string, setLoadingFalse = false) => {
     supabase
       .from("user_profiles")
       .select("role, is_approved, display_name")
@@ -35,7 +35,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       .then(({ data, error }) => {
         if (error) {
           console.error("Failed to load user profile:", error);
-          // Fallback: superadmin fuer den ersten User (Gilbert)
           setUserProfile(null);
         } else {
           setUserProfile(data as UserProfile);
@@ -44,6 +43,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       .catch((err) => {
         console.error("Profile fetch error:", err);
         setUserProfile(null);
+      })
+      .finally(() => {
+        if (setLoadingFalse) setIsLoading(false);
       });
   };
 
@@ -52,9 +54,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     supabase.auth.getSession().then(({ data: { session } }) => {
       setSession(session);
       if (session?.user) {
-        fetchProfile(session.user.id);
+        // isLoading wird erst false wenn Profil geladen ist
+        fetchProfile(session.user.id, true);
+      } else {
+        setIsLoading(false);
       }
-      setIsLoading(false);
     });
 
     // 2. Auth State Changes (login, logout, token refresh)
@@ -68,7 +72,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       } else {
         setUserProfile(null);
       }
-      setIsLoading(false);
     });
 
     return () => subscription.unsubscribe();
