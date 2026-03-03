@@ -1,12 +1,11 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useCallback } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { createChart, ColorType, CrosshairMode } from "lightweight-charts";
 import type { IChartApi, ISeriesApi } from "lightweight-charts";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import { AlertTriangle } from "lucide-react";
+import { AlertTriangle, Maximize2, Minimize2 } from "lucide-react";
 
 interface TradingViewChartProps {
   symbol: string;
@@ -16,7 +15,6 @@ interface TradingViewChartProps {
   takeProfit2?: number | null;
   takeProfit3?: number | null;
   trailingStopPrice?: number | null;
-  height?: number;
 }
 
 const TIME_RANGES = [
@@ -27,11 +25,10 @@ const TIME_RANGES = [
   { label: "All", days: 9999 },
 ];
 
-// lightweight-charts v4 can't parse HSL colors — use hex equivalents
 const CHART_COLORS = {
-  textColor: "#818a93",       // hsl(215, 12%, 55%)
-  gridColor: "#232730",       // hsl(228, 14%, 16%)
-  crosshairColor: "#4f5662",  // hsl(215, 12%, 35%)
+  textColor: "#818a93",
+  gridColor: "#1a1d24",
+  crosshairColor: "#4f5662",
 };
 
 export default function TradingViewChart({
@@ -42,13 +39,21 @@ export default function TradingViewChart({
   takeProfit2,
   takeProfit3,
   trailingStopPrice,
-  height = 400,
 }: TradingViewChartProps) {
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const candlestickSeriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
   const [selectedRange, setSelectedRange] = useState(90);
   const [chartError, setChartError] = useState<string | null>(null);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const [crosshairData, setCrosshairData] = useState<{
+    time?: string;
+    open?: number;
+    high?: number;
+    low?: number;
+    close?: number;
+    volume?: number;
+  } | null>(null);
 
   // Fetch OHLC price data
   const priceQuery = useQuery({
@@ -110,11 +115,12 @@ export default function TradingViewChart({
     },
   });
 
+  const chartHeight = isFullscreen ? window.innerHeight - 120 : 520;
+
   // Create and manage chart
   useEffect(() => {
     if (!chartContainerRef.current || !priceQuery.data?.length) return;
 
-    // Clean up existing chart
     if (chartRef.current) {
       chartRef.current.remove();
       chartRef.current = null;
@@ -128,7 +134,7 @@ export default function TradingViewChart({
         layout: {
           background: { type: ColorType.Solid, color: "transparent" },
           textColor: CHART_COLORS.textColor,
-          fontFamily: "'Inter', system-ui, sans-serif",
+          fontFamily: "'JetBrains Mono', 'SF Mono', monospace",
           fontSize: 11,
         },
         grid: {
@@ -137,18 +143,22 @@ export default function TradingViewChart({
         },
         crosshair: {
           mode: CrosshairMode.Normal,
-          vertLine: { color: CHART_COLORS.crosshairColor, width: 1, style: 2 },
-          horzLine: { color: CHART_COLORS.crosshairColor, width: 1, style: 2 },
+          vertLine: { color: CHART_COLORS.crosshairColor, width: 1, style: 2, labelBackgroundColor: "#2a2d36" },
+          horzLine: { color: CHART_COLORS.crosshairColor, width: 1, style: 2, labelBackgroundColor: "#2a2d36" },
         },
         rightPriceScale: {
           borderColor: CHART_COLORS.gridColor,
+          scaleMargins: { top: 0.08, bottom: 0.08 },
         },
         timeScale: {
           borderColor: CHART_COLORS.gridColor,
           timeVisible: false,
+          rightOffset: 5,
+          barSpacing: 8,
+          minBarSpacing: 4,
         },
         width: chartContainerRef.current.clientWidth,
-        height: height,
+        height: chartHeight,
       });
     } catch (err) {
       console.error("Chart creation failed:", err);
@@ -165,8 +175,8 @@ export default function TradingViewChart({
         downColor: "#ef4444",
         borderUpColor: "#22c55e",
         borderDownColor: "#ef4444",
-        wickUpColor: "#22c55e",
-        wickDownColor: "#ef4444",
+        wickUpColor: "#22c55e80",
+        wickDownColor: "#ef444480",
       });
 
       const candleData = priceQuery.data.map((p) => ({
@@ -179,6 +189,26 @@ export default function TradingViewChart({
 
       candlestickSeries.setData(candleData);
       candlestickSeriesRef.current = candlestickSeries;
+
+      // Crosshair move handler for OHLCV display
+      chart.subscribeCrosshairMove((param) => {
+        if (!param.time || !param.seriesData) {
+          setCrosshairData(null);
+          return;
+        }
+        const data = param.seriesData.get(candlestickSeries);
+        if (data && 'open' in data) {
+          const matchingPrice = priceQuery.data.find(p => p.date === param.time);
+          setCrosshairData({
+            time: param.time as string,
+            open: (data as any).open,
+            high: (data as any).high,
+            low: (data as any).low,
+            close: (data as any).close,
+            volume: matchingPrice ? Number(matchingPrice.volume) : undefined,
+          });
+        }
+      });
 
       // ICE Signal markers
       if (iceQuery.data?.length) {
@@ -215,8 +245,11 @@ export default function TradingViewChart({
           const jawSeries = chart.addLineSeries({
             color: "#3b82f6",
             lineWidth: 1,
-            lineStyle: 2,
+            lineStyle: 0,
             title: "Jaw",
+            crosshairMarkerVisible: false,
+            lastValueVisible: true,
+            priceLineVisible: false,
           });
           jawSeries.setData(jawData);
         }
@@ -225,8 +258,11 @@ export default function TradingViewChart({
           const teethSeries = chart.addLineSeries({
             color: "#ef4444",
             lineWidth: 1,
-            lineStyle: 2,
+            lineStyle: 0,
             title: "Teeth",
+            crosshairMarkerVisible: false,
+            lastValueVisible: true,
+            priceLineVisible: false,
           });
           teethSeries.setData(teethData);
         }
@@ -235,20 +271,23 @@ export default function TradingViewChart({
           const lipsSeries = chart.addLineSeries({
             color: "#22c55e",
             lineWidth: 1,
-            lineStyle: 2,
+            lineStyle: 0,
             title: "Lips",
+            crosshairMarkerVisible: false,
+            lastValueVisible: true,
+            priceLineVisible: false,
           });
           lipsSeries.setData(lipsData);
         }
       }
 
-      // Price level lines for active position
+      // Price level lines
       if (entryPrice) {
         candlestickSeries.createPriceLine({
           price: entryPrice,
           color: "#3b82f6",
-          lineWidth: 1,
-          lineStyle: 2,
+          lineWidth: 2,
+          lineStyle: 0,
           axisLabelVisible: true,
           title: "Entry",
         });
@@ -257,7 +296,7 @@ export default function TradingViewChart({
         candlestickSeries.createPriceLine({
           price: stopLoss,
           color: "#ef4444",
-          lineWidth: 1,
+          lineWidth: 2,
           lineStyle: 2,
           axisLabelVisible: true,
           title: "SL",
@@ -304,7 +343,6 @@ export default function TradingViewChart({
         });
       }
 
-      // Fit content
       chart.timeScale().fitContent();
     } catch (err) {
       console.error("Chart data setup failed:", err);
@@ -329,15 +367,19 @@ export default function TradingViewChart({
         chartRef.current = null;
       }
     };
-  }, [priceQuery.data, crocQuery.data, iceQuery.data, entryPrice, stopLoss, takeProfit1, takeProfit2, takeProfit3, trailingStopPrice, height]);
+  }, [priceQuery.data, crocQuery.data, iceQuery.data, entryPrice, stopLoss, takeProfit1, takeProfit2, takeProfit3, trailingStopPrice, chartHeight]);
+
+  const toggleFullscreen = useCallback(() => {
+    setIsFullscreen(prev => !prev);
+  }, []);
 
   if (priceQuery.isLoading) {
-    return <Skeleton className="w-full" style={{ height }} />;
+    return <Skeleton className="w-full h-[520px]" />;
   }
 
   if (priceQuery.error) {
     return (
-      <div className="flex items-center justify-center text-destructive" style={{ height }}>
+      <div className="flex items-center justify-center text-destructive h-[520px]">
         Fehler beim Laden der Kursdaten
       </div>
     );
@@ -345,7 +387,7 @@ export default function TradingViewChart({
 
   if (chartError) {
     return (
-      <div className="flex flex-col items-center justify-center gap-2 text-muted-foreground" style={{ height }}>
+      <div className="flex flex-col items-center justify-center gap-2 text-muted-foreground h-[520px]">
         <AlertTriangle className="h-8 w-8 text-yellow-500" />
         <p className="text-sm">Chart konnte nicht geladen werden</p>
         <p className="text-xs text-muted-foreground/60">{chartError}</p>
@@ -353,30 +395,101 @@ export default function TradingViewChart({
     );
   }
 
+  const lastCandle = priceQuery.data?.[priceQuery.data.length - 1];
+  const displayData = crosshairData || (lastCandle ? {
+    open: Number(lastCandle.open),
+    high: Number(lastCandle.high),
+    low: Number(lastCandle.low),
+    close: Number(lastCandle.close),
+    volume: Number(lastCandle.volume),
+    time: lastCandle.date,
+  } : null);
+
   return (
-    <div className="space-y-2">
-      {/* Time range buttons */}
-      <div className="flex gap-1">
-        {TIME_RANGES.map((range) => (
-          <Button
-            key={range.label}
-            variant={selectedRange === range.days ? "default" : "ghost"}
-            size="sm"
-            className={cn(
-              "h-7 px-3 text-xs",
-              selectedRange === range.days
-                ? "bg-primary text-primary-foreground"
-                : "text-muted-foreground hover:text-foreground"
-            )}
-            onClick={() => setSelectedRange(range.days)}
+    <div className={cn(
+      "flex flex-col",
+      isFullscreen && "fixed inset-0 z-50 bg-background p-4"
+    )}>
+      {/* Chart toolbar */}
+      <div className="flex items-center justify-between mb-1">
+        {/* OHLCV data display */}
+        <div className="flex items-center gap-3 text-xs font-mono">
+          <span className="text-muted-foreground/60 font-sans text-[11px]">CROC Overlay</span>
+          {displayData && (
+            <>
+              <span className="text-muted-foreground">
+                O <span className={cn(
+                  displayData.close! >= displayData.open! ? "text-green-400" : "text-red-400"
+                )}>{displayData.open?.toFixed(2)}</span>
+              </span>
+              <span className="text-muted-foreground">
+                H <span className="text-foreground">{displayData.high?.toFixed(2)}</span>
+              </span>
+              <span className="text-muted-foreground">
+                L <span className="text-foreground">{displayData.low?.toFixed(2)}</span>
+              </span>
+              <span className="text-muted-foreground">
+                C <span className={cn(
+                  displayData.close! >= displayData.open! ? "text-green-400" : "text-red-400"
+                )}>{displayData.close?.toFixed(2)}</span>
+              </span>
+              {displayData.volume !== undefined && (
+                <span className="text-muted-foreground">
+                  Vol <span className="text-foreground/70">{(displayData.volume / 1_000_000).toFixed(1)}M</span>
+                </span>
+              )}
+            </>
+          )}
+        </div>
+
+        <div className="flex items-center gap-1">
+          {/* Time range pills */}
+          <div className="flex items-center bg-muted/30 rounded-md p-0.5">
+            {TIME_RANGES.map((range) => (
+              <button
+                key={range.label}
+                className={cn(
+                  "px-2.5 py-1 text-[11px] font-mono rounded-sm transition-colors",
+                  selectedRange === range.days
+                    ? "bg-primary text-primary-foreground font-semibold"
+                    : "text-muted-foreground hover:text-foreground"
+                )}
+                onClick={() => setSelectedRange(range.days)}
+              >
+                {range.label}
+              </button>
+            ))}
+          </div>
+
+          {/* Fullscreen toggle */}
+          <button
+            onClick={toggleFullscreen}
+            className="p-1.5 text-muted-foreground hover:text-foreground transition-colors rounded-sm hover:bg-muted/30"
           >
-            {range.label}
-          </Button>
-        ))}
+            {isFullscreen ? <Minimize2 className="h-3.5 w-3.5" /> : <Maximize2 className="h-3.5 w-3.5" />}
+          </button>
+        </div>
       </div>
 
       {/* Chart container */}
-      <div ref={chartContainerRef} className="w-full rounded-lg overflow-hidden" />
+      <div
+        ref={chartContainerRef}
+        className="w-full rounded-md overflow-hidden"
+        style={{ minHeight: chartHeight }}
+      />
+
+      {/* Alligator legend */}
+      <div className="flex items-center gap-4 mt-1.5 text-[10px] font-mono text-muted-foreground/60">
+        <span className="flex items-center gap-1">
+          <span className="w-3 h-px bg-[#3b82f6] inline-block" /> Jaw (13)
+        </span>
+        <span className="flex items-center gap-1">
+          <span className="w-3 h-px bg-[#ef4444] inline-block" /> Teeth (8)
+        </span>
+        <span className="flex items-center gap-1">
+          <span className="w-3 h-px bg-[#22c55e] inline-block" /> Lips (5)
+        </span>
+      </div>
     </div>
   );
 }
