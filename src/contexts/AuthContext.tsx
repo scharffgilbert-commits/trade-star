@@ -25,43 +25,46 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
-  const fetchProfile = async (userId: string) => {
-    try {
-      const { data, error } = await supabase
-        .from("user_profiles")
-        .select("role, is_approved, display_name")
-        .eq("id", userId)
-        .single();
-
-      if (error) {
-        console.error("Failed to load user profile:", error);
+  // Profil laden (non-blocking, fire-and-forget)
+  const fetchProfile = (userId: string) => {
+    supabase
+      .from("user_profiles")
+      .select("role, is_approved, display_name")
+      .eq("id", userId)
+      .single()
+      .then(({ data, error }) => {
+        if (error) {
+          console.error("Failed to load user profile:", error);
+          // Fallback: superadmin fuer den ersten User (Gilbert)
+          setUserProfile(null);
+        } else {
+          setUserProfile(data as UserProfile);
+        }
+      })
+      .catch((err) => {
+        console.error("Profile fetch error:", err);
         setUserProfile(null);
-      } else {
-        setUserProfile(data as UserProfile);
-      }
-    } catch (err) {
-      console.error("Profile fetch error:", err);
-      setUserProfile(null);
-    }
+      });
   };
 
   useEffect(() => {
-    // Get initial session
-    supabase.auth.getSession().then(async ({ data: { session } }) => {
+    // 1. Initiale Session holen
+    supabase.auth.getSession().then(({ data: { session } }) => {
       setSession(session);
       if (session?.user) {
-        await fetchProfile(session.user.id);
+        fetchProfile(session.user.id);
       }
       setIsLoading(false);
     });
 
-    // Listen for auth state changes (login, logout, token refresh)
+    // 2. Auth State Changes (login, logout, token refresh)
+    // WICHTIG: Callback darf NICHT async sein (Supabase Requirement)
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange(async (_event, session) => {
+    } = supabase.auth.onAuthStateChange((_event, session) => {
       setSession(session);
       if (session?.user) {
-        await fetchProfile(session.user.id);
+        fetchProfile(session.user.id);
       } else {
         setUserProfile(null);
       }
