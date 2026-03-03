@@ -1,6 +1,7 @@
 import { useState, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
+import { useAuth } from "@/contexts/AuthContext";
 import { motion } from "framer-motion";
 import {
   Briefcase,
@@ -575,6 +576,7 @@ function PendingPositionsTab() {
 // ────────────────────────────────────────────
 function AutoTradeConfigSection() {
   const { accountId, isReadOnly } = useAccountContext();
+  const { isSuperAdmin } = useAuth();
   const { config, isLoading, updateConfig } = useAutoTradeConfig(accountId);
   const [open, setOpen] = useState(false);
 
@@ -593,8 +595,8 @@ function AutoTradeConfigSection() {
     },
   });
 
-  // Hide auto-trade config for read-only accounts (backtest)
-  if (isReadOnly) return null;
+  // Auto-Trade Config nur fuer SuperAdmin sichtbar
+  if (isReadOnly || !isSuperAdmin) return null;
 
   if (isLoading || !config) {
     return <Skeleton className="h-12 rounded-lg" />;

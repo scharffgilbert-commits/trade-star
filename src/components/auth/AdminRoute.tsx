@@ -1,13 +1,12 @@
 import { Navigate } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
-import PendingApprovalPage from "@/pages/PendingApprovalPage";
 
-export default function ProtectedRoute({
+export default function AdminRoute({
   children,
 }: {
   children: React.ReactNode;
 }) {
-  const { session, isLoading, isApproved } = useAuth();
+  const { isSuperAdmin, isLoading } = useAuth();
 
   if (isLoading) {
     return (
@@ -20,13 +19,8 @@ export default function ProtectedRoute({
     );
   }
 
-  if (!session) {
-    return <Navigate to="/login" replace />;
-  }
-
-  // User eingeloggt aber noch nicht freigeschaltet
-  if (!isApproved) {
-    return <PendingApprovalPage />;
+  if (!isSuperAdmin) {
+    return <Navigate to="/" replace />;
   }
 
   return <>{children}</>;

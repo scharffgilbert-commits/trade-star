@@ -2,10 +2,19 @@ import React, { createContext, useContext, useEffect, useState } from "react";
 import { Session, User } from "@supabase/supabase-js";
 import { supabase } from "@/integrations/supabase/client";
 
+interface UserProfile {
+  role: "user" | "superadmin";
+  is_approved: boolean;
+  display_name: string | null;
+}
+
 interface AuthContextValue {
   session: Session | null;
   user: User | null;
+  userProfile: UserProfile | null;
   isLoading: boolean;
+  isSuperAdmin: boolean;
+  isApproved: boolean;
   signOut: () => Promise<void>;
 }
 
@@ -13,20 +22,49 @@ const AuthContext = createContext<AuthContextValue | null>(null);
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
+  const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+
+  const fetchProfile = async (userId: string) => {
+    try {
+      const { data, error } = await supabase
+        .from("user_profiles")
+        .select("role, is_approved, display_name")
+        .eq("id", userId)
+        .single();
+
+      if (error) {
+        console.error("Failed to load user profile:", error);
+        setUserProfile(null);
+      } else {
+        setUserProfile(data as UserProfile);
+      }
+    } catch (err) {
+      console.error("Profile fetch error:", err);
+      setUserProfile(null);
+    }
+  };
 
   useEffect(() => {
     // Get initial session
-    supabase.auth.getSession().then(({ data: { session } }) => {
+    supabase.auth.getSession().then(async ({ data: { session } }) => {
       setSession(session);
+      if (session?.user) {
+        await fetchProfile(session.user.id);
+      }
       setIsLoading(false);
     });
 
     // Listen for auth state changes (login, logout, token refresh)
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, session) => {
+    } = supabase.auth.onAuthStateChange(async (_event, session) => {
       setSession(session);
+      if (session?.user) {
+        await fetchProfile(session.user.id);
+      } else {
+        setUserProfile(null);
+      }
       setIsLoading(false);
     });
 
@@ -36,6 +74,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const signOut = async () => {
     await supabase.auth.signOut();
     setSession(null);
+    setUserProfile(null);
   };
 
   return (
@@ -43,7 +82,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       value={{
         session,
         user: session?.user ?? null,
+        userProfile,
         isLoading,
+        isSuperAdmin: userProfile?.role === "superadmin",
+        isApproved: userProfile?.is_approved ?? false,
         signOut,
       }}
     >

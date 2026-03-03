@@ -6,6 +6,7 @@ import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { AuthProvider } from "@/contexts/AuthContext";
 import { AccountProvider } from "@/contexts/AccountContext";
 import ProtectedRoute from "@/components/auth/ProtectedRoute";
+import AdminRoute from "@/components/auth/AdminRoute";
 import AppLayout from "@/layouts/AppLayout";
 import Dashboard from "@/pages/Dashboard";
 import SymbolDetail from "@/pages/SymbolDetail";
@@ -15,6 +16,7 @@ import SignalsPage from "@/pages/SignalsPage";
 import CrocMonitor from "@/pages/CrocMonitor";
 import RunPage from "@/pages/RunPage";
 import BacktestReport from "@/pages/BacktestReport";
+import SuperAdminPage from "@/pages/SuperAdminPage";
 import LoginPage from "@/pages/LoginPage";
 import NotFound from "./pages/NotFound";
 
@@ -37,14 +39,18 @@ const App = () => (
                   </ProtectedRoute>
                 }
               >
+                {/* User-Seiten (alle freigeschalteten User) */}
                 <Route path="/" element={<Dashboard />} />
                 <Route path="/symbol/:symbol" element={<SymbolDetail />} />
                 <Route path="/positions" element={<Positions />} />
                 <Route path="/portfolio" element={<Portfolio />} />
                 <Route path="/signals" element={<SignalsPage />} />
-                <Route path="/croc" element={<CrocMonitor />} />
-                <Route path="/backtest" element={<BacktestReport />} />
-                <Route path="/run" element={<RunPage />} />
+
+                {/* Admin-Seiten (nur SuperAdmin) */}
+                <Route path="/croc" element={<AdminRoute><CrocMonitor /></AdminRoute>} />
+                <Route path="/backtest" element={<AdminRoute><BacktestReport /></AdminRoute>} />
+                <Route path="/run" element={<AdminRoute><RunPage /></AdminRoute>} />
+                <Route path="/admin" element={<AdminRoute><SuperAdminPage /></AdminRoute>} />
               </Route>
               <Route path="*" element={<NotFound />} />
             </Routes>

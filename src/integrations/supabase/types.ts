@@ -2630,6 +2630,39 @@ export type Database = {
           },
         ]
       }
+      user_profiles: {
+        Row: {
+          id: string
+          email: string
+          display_name: string | null
+          role: string
+          is_approved: boolean
+          approved_at: string | null
+          approved_by: string | null
+          created_at: string
+        }
+        Insert: {
+          id: string
+          email: string
+          display_name?: string | null
+          role?: string
+          is_approved?: boolean
+          approved_at?: string | null
+          approved_by?: string | null
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          email?: string
+          display_name?: string | null
+          role?: string
+          is_approved?: boolean
+          approved_at?: string | null
+          approved_by?: string | null
+          created_at?: string
+        }
+        Relationships: []
+      }
       strategy_config: {
         Row: {
           auto_tunable: boolean | null
