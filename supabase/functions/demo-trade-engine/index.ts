@@ -108,6 +108,48 @@ Deno.serve(async (req) => {
       }
     }
 
+    // ── Multi-account iteration for pipeline actions ──
+    // When no account_id is provided, iterate ALL active auto-trade accounts
+    const multiAccountActions = ["auto_trade", "check_exits", "update_trailing", "check_pending"];
+    if (multiAccountActions.includes(action) && !body.account_id) {
+      const { data: activeConfigs } = await supabase
+        .from("auto_trade_config")
+        .select("account_id")
+        .eq("is_enabled", true);
+      const accountIds = (activeConfigs ?? []).map((c: any) => c.account_id);
+      if (accountIds.length === 0) {
+        return jsonResponse({ message: "No active auto-trade accounts", results: [] });
+      }
+      const allResults: any[] = [];
+      for (const acctId of accountIds) {
+        const acctBody = { ...body, account_id: acctId };
+        try {
+          let result: Response;
+          switch (action) {
+            case "auto_trade":
+              result = await handleAutoTrade(supabase, acctBody);
+              break;
+            case "check_exits":
+              result = await handleCheckExits(supabase, acctBody);
+              break;
+            case "update_trailing":
+              result = await handleUpdateTrailing(supabase, acctBody);
+              break;
+            case "check_pending":
+              result = await handleCheckPending(supabase, acctBody);
+              break;
+            default:
+              result = jsonResponse({ error: `Unknown action: ${action}` });
+          }
+          const resultData = await result.json();
+          allResults.push({ account_id: acctId, ...resultData });
+        } catch (err) {
+          allResults.push({ account_id: acctId, error: err.message });
+        }
+      }
+      return jsonResponse({ message: `${action} completed for ${accountIds.length} accounts`, results: allResults });
+    }
+
     switch (action) {
       case "auto_trade":
         return await handleAutoTrade(supabase, body);
@@ -1139,10 +1181,17 @@ async function checkTradingRules(
 
     switch (rule.rule_type) {
       case "MAX_POSITION_SIZE": {
-        const maxSize = Number(ruleValue?.max_amount ?? defaultMaxPositionSize);
-        const posSize = Number(decision.entry_price) * 10; // approximate
+        const maxSize = Number(ruleValue?.max_value ?? ruleValue?.max_amount ?? defaultMaxPositionSize);
+        // Estimate position size using risk-based quantity
+        const entry = Number(decision.entry_price);
+        const sl = Number(decision.stop_loss);
+        const riskAmt = account.current_balance * ((strategyParams?.risk_per_trade_percent ?? 1) / 100);
+        const priceDiff = Math.abs(entry - sl);
+        let estQty = priceDiff > 0 ? Math.floor(riskAmt / priceDiff) : 1;
+        estQty = Math.max(1, estQty);
+        const posSize = estQty * entry;
         passed = posSize <= maxSize;
-        reason = `Position $${posSize} vs max $${maxSize}`;
+        reason = `Position $${posSize.toFixed(0)} (${estQty}x$${entry.toFixed(2)}) vs max $${maxSize}`;
         break;
       }
       case "MAX_OPEN_POSITIONS": {
@@ -1168,18 +1217,65 @@ async function checkTradingRules(
         break;
       }
       case "MIN_SIGNAL_GRADE": {
-        const minConf = Number(ruleValue?.min_confidence ?? defaultMinConfidence);
+        // Grade mapping: B=60, B+=70, A-=75, A=80, A+=90
+        const gradeMap: Record<string, number> = { "C": 40, "C+": 50, "B": 60, "B+": 70, "A-": 75, "A": 80, "A+": 90 };
+        const minGrade = ruleValue?.min_grade ?? "B+";
+        const minScore = gradeMap[minGrade] ?? 70;
         const conf = Number(decision.confidence_score ?? 0);
-        // B+ = 70+, A = 80+, A+ = 90+
-        passed = conf >= minConf;
-        reason = `Confidence ${conf} vs min ${minConf}`;
+        passed = conf >= minScore;
+        reason = `Confidence ${conf} vs min ${minScore} (Grade ${minGrade})`;
         break;
       }
       case "MIN_CONFIDENCE": {
-        const minConf = Number(ruleValue?.min_percent ?? defaultMinConfidence);
+        const minConf = Number(ruleValue?.min_value ?? ruleValue?.min_percent ?? defaultMinConfidence);
         const conf = Number(decision.confidence_score ?? 0);
         passed = conf >= minConf;
         reason = `Confidence ${conf}% vs min ${minConf}%`;
+        break;
+      }
+      case "DAILY_LOSS_LIMIT": {
+        const maxLossPct = Number(ruleValue?.max_percent ?? 5);
+        // Sum of unrealized + realized PnL today
+        const today = new Date().toISOString().slice(0, 10);
+        const { data: todayTrades } = await supabase
+          .from("demo_positions")
+          .select("pnl_amount")
+          .eq("account_id", accountId)
+          .eq("position_status", "CLOSED")
+          .gte("closed_at", today + "T00:00:00");
+        const realizedPnl = (todayTrades ?? []).reduce((s: number, t: any) => s + Number(t.pnl_amount ?? 0), 0);
+        const dailyLossPct = Math.abs(Math.min(0, realizedPnl)) / account.current_balance * 100;
+        passed = dailyLossPct < maxLossPct;
+        reason = `Daily loss ${dailyLossPct.toFixed(1)}% vs max ${maxLossPct}%`;
+        break;
+      }
+      case "MAX_TOTAL_EXPOSURE": {
+        const maxMultiple = Number(ruleValue?.max_multiple ?? 15);
+        const { data: openPos } = await supabase
+          .from("demo_positions")
+          .select("quantity, entry_price, notional_value")
+          .eq("account_id", accountId)
+          .eq("position_status", "OPEN");
+        const totalExposure = (openPos ?? []).reduce((s: number, p: any) => {
+          const notional = Number(p.notional_value) || (Number(p.quantity) * Number(p.entry_price));
+          return s + notional;
+        }, 0);
+        const exposureMultiple = totalExposure / account.current_balance;
+        passed = exposureMultiple < maxMultiple;
+        reason = `Exposure ${exposureMultiple.toFixed(1)}x vs max ${maxMultiple}x`;
+        break;
+      }
+      case "MAX_MARGIN_UTILIZATION": {
+        const maxMarginPct = Number(ruleValue?.max_percent ?? 80);
+        const { data: openPos } = await supabase
+          .from("demo_positions")
+          .select("margin_required")
+          .eq("account_id", accountId)
+          .eq("position_status", "OPEN");
+        const totalMargin = (openPos ?? []).reduce((s: number, p: any) => s + Number(p.margin_required ?? 0), 0);
+        const marginPct = (totalMargin / account.current_balance) * 100;
+        passed = marginPct < maxMarginPct;
+        reason = `Margin ${marginPct.toFixed(1)}% vs max ${maxMarginPct}%`;
         break;
       }
       default:
