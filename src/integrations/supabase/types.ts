@@ -409,6 +409,42 @@ export type Database = {
           },
         ]
       }
+      cfd_instrument_config: {
+        Row: {
+          created_at: string | null
+          currency: string | null
+          id: number
+          leverage_max: number | null
+          min_trade_size: number | null
+          overnight_rate_long: number | null
+          overnight_rate_short: number | null
+          spread_pips: number | null
+          symbol: string
+        }
+        Insert: {
+          created_at?: string | null
+          currency?: string | null
+          id?: number
+          leverage_max?: number | null
+          min_trade_size?: number | null
+          overnight_rate_long?: number | null
+          overnight_rate_short?: number | null
+          spread_pips?: number | null
+          symbol: string
+        }
+        Update: {
+          created_at?: string | null
+          currency?: string | null
+          id?: number
+          leverage_max?: number | null
+          min_trade_size?: number | null
+          overnight_rate_long?: number | null
+          overnight_rate_short?: number | null
+          spread_pips?: number | null
+          symbol?: string
+        }
+        Relationships: []
+      }
       croc_ice_signals: {
         Row: {
           created_at: string | null
@@ -537,13 +573,18 @@ export type Database = {
       }
       demo_accounts: {
         Row: {
+          account_currency: string | null
           account_name: string
           created_at: string
           current_balance: number
+          forced_close_level: number | null
           id: number
           initial_balance: number
           is_active: boolean
+          leverage_ratio: number | null
           losing_trades: number
+          margin_call_level: number | null
+          margin_used: number | null
           max_drawdown_percent: number
           peak_balance: number
           reserved_balance: number
@@ -555,13 +596,18 @@ export type Database = {
           winning_trades: number
         }
         Insert: {
+          account_currency?: string | null
           account_name?: string
           created_at?: string
           current_balance?: number
+          forced_close_level?: number | null
           id?: number
           initial_balance?: number
           is_active?: boolean
+          leverage_ratio?: number | null
           losing_trades?: number
+          margin_call_level?: number | null
+          margin_used?: number | null
           max_drawdown_percent?: number
           peak_balance?: number
           reserved_balance?: number
@@ -573,13 +619,18 @@ export type Database = {
           winning_trades?: number
         }
         Update: {
+          account_currency?: string | null
           account_name?: string
           created_at?: string
           current_balance?: number
+          forced_close_level?: number | null
           id?: number
           initial_balance?: number
           is_active?: boolean
+          leverage_ratio?: number | null
           losing_trades?: number
+          margin_call_level?: number | null
+          margin_used?: number | null
           max_drawdown_percent?: number
           peak_balance?: number
           reserved_balance?: number
@@ -604,9 +655,13 @@ export type Database = {
           exit_price: number | null
           holding_days: number | null
           id: number
+          is_cfd: boolean | null
+          margin_required: number | null
           notes: string | null
+          notional_value: number | null
           opened_at: string
           original_quantity: number | null
+          overnight_fees_total: number | null
           parent_position_id: number | null
           partial_close_at_1r: boolean | null
           partial_close_price: number | null
@@ -650,9 +705,13 @@ export type Database = {
           exit_price?: number | null
           holding_days?: number | null
           id?: number
+          is_cfd?: boolean | null
+          margin_required?: number | null
           notes?: string | null
+          notional_value?: number | null
           opened_at?: string
           original_quantity?: number | null
+          overnight_fees_total?: number | null
           parent_position_id?: number | null
           partial_close_at_1r?: boolean | null
           partial_close_price?: number | null
@@ -696,9 +755,13 @@ export type Database = {
           exit_price?: number | null
           holding_days?: number | null
           id?: number
+          is_cfd?: boolean | null
+          margin_required?: number | null
           notes?: string | null
+          notional_value?: number | null
           opened_at?: string
           original_quantity?: number | null
+          overnight_fees_total?: number | null
           parent_position_id?: number | null
           partial_close_at_1r?: boolean | null
           partial_close_price?: number | null
@@ -1023,6 +1086,50 @@ export type Database = {
           wave_days?: number | null
         }
         Relationships: []
+      }
+      margin_call_log: {
+        Row: {
+          account_id: number | null
+          action_taken: string | null
+          created_at: string | null
+          equity: number | null
+          event_type: string
+          id: number
+          margin_level: number | null
+          margin_used: number | null
+          positions_affected: string[] | null
+        }
+        Insert: {
+          account_id?: number | null
+          action_taken?: string | null
+          created_at?: string | null
+          equity?: number | null
+          event_type: string
+          id?: number
+          margin_level?: number | null
+          margin_used?: number | null
+          positions_affected?: string[] | null
+        }
+        Update: {
+          account_id?: number | null
+          action_taken?: string | null
+          created_at?: string | null
+          equity?: number | null
+          event_type?: string
+          id?: number
+          margin_level?: number | null
+          margin_used?: number | null
+          positions_affected?: string[] | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "margin_call_log_account_id_fkey"
+            columns: ["account_id"]
+            isOneToOne: false
+            referencedRelation: "demo_accounts"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       market_calendar: {
         Row: {
@@ -3333,6 +3440,7 @@ export type Database = {
     }
     Functions: {
       advance_pipeline: { Args: never; Returns: Json }
+      ai_analysis_orchestrator: { Args: { p_date?: string }; Returns: Json }
       batch_calculate_all_symbols: {
         Args: never
         Returns: {
@@ -3342,6 +3450,7 @@ export type Database = {
         }[]
       }
       bytea_to_text: { Args: { data: string }; Returns: string }
+      calc_indicators_single: { Args: { p_symbol: string }; Returns: Json }
       calculate_advanced_indicators: {
         Args: { p_symbol: string }
         Returns: {
@@ -3767,6 +3876,10 @@ export type Database = {
         }
         Returns: Json
       }
+      run_indicators_batch: {
+        Args: { p_batch_size?: number; p_date: string }
+        Returns: Json
+      }
       snapshot_daily_balance: { Args: never; Returns: Json }
       start_workflow_run: {
         Args: {
@@ -3777,6 +3890,18 @@ export type Database = {
         Returns: number
       }
       text_to_bytea: { Args: { data: string }; Returns: string }
+      trigger_ai_batch: {
+        Args: { p_batch_size?: number; p_date: string; p_strand: string }
+        Returns: Json
+      }
+      trigger_indicators_rpc: {
+        Args: { p_batch_size?: number; p_date: string }
+        Returns: Json
+      }
+      trigger_indicators_via_http: {
+        Args: { p_batch_size?: number; p_date: string }
+        Returns: Json
+      }
       update_demo_positions_prices: { Args: never; Returns: Json }
       urlencode:
         | { Args: { data: Json }; Returns: string }
@@ -3792,6 +3917,7 @@ export type Database = {
               error: true
             } & "Could not choose the best candidate function between: public.urlencode(string => bytea), public.urlencode(string => varchar). Try renaming the parameters or the function itself in the database so function overloading can be resolved"
           }
+      user_account_ids: { Args: never; Returns: number[] }
       validate_symbol_data_quality: {
         Args: { p_symbol: string }
         Returns: {

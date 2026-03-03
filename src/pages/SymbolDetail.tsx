@@ -161,12 +161,9 @@ export default function SymbolDetail() {
       </div>
 
       {/* Main Content: Chart + Trade Panel */}
-      <div className="grid grid-cols-1 xl:grid-cols-[1fr_340px] gap-6">
+      <div className="grid grid-cols-1 xl:grid-cols-[1fr_340px] gap-3">
         {/* Left: Chart */}
-        <div className="card-elevated rounded-xl border border-border/50 p-4">
-          <h2 className="font-display text-sm font-semibold text-foreground mb-3">
-            Candlestick-Chart mit CROC-Overlay
-          </h2>
+        <div className="rounded-lg border border-border/40 bg-card/50 p-3">
           <TradingViewChart
             symbol={symbol}
             entryPrice={chartOverlay ? Number(chartOverlay.entry_price) : undefined}
