@@ -356,12 +356,36 @@ function ClosedPositionsTab() {
                 <TableHead className="text-right">P&L ($)</TableHead>
                 <TableHead className="text-right">P&L (%)</TableHead>
                 <TableHead className="text-right">Dauer</TableHead>
+                <TableHead>Exit-Grund</TableHead>
                 <TableHead>Trigger</TableHead>
                 <TableHead>Notizen</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {positions.map((p) => (
+              {positions.map((p) => {
+                const exitReasonLabel: Record<string, string> = {
+                  STOPPED_OUT: "Stop Loss",
+                  TP_HIT: "Take Profit",
+                };
+                const triggerLabel: Record<string, string> = {
+                  AUTO_SIGNAL: "Auto-Signal",
+                  STOP_LOSS: "Stop Loss",
+                  TRAILING_STOP: "Trailing Stop",
+                  TAKE_PROFIT: "Take Profit",
+                  MAX_HOLDING: "Max Haltezeit",
+                  MANUAL: "Manuell",
+                  SIGNAL_REVERSAL: "Signal-Umkehr",
+                  PREMIUM_COUNTER: "Premium Counter",
+                  AUTO_RULE: "Auto Regel",
+                  BACKTEST_END: "Backtest Ende",
+                  EXPIRED: "Abgelaufen",
+                };
+                const exitReason = exitReasonLabel[p.position_status]
+                  ?? triggerLabel[p.trigger_source ?? ""] ?? "Close";
+                const exitColor = p.position_status === "STOPPED_OUT" ? "text-bearish"
+                  : p.position_status === "TP_HIT" ? "text-bullish"
+                  : "text-muted-foreground";
+                return (
                 <TableRow key={p.id} className={rowBg(p.pnl_amount)}>
                   <TableCell className="font-mono font-bold text-foreground">{p.symbol}</TableCell>
                   <TableCell>
@@ -387,12 +411,18 @@ function ClosedPositionsTab() {
                   <TableCell className="text-right font-mono text-muted-foreground">
                     {p.holding_days != null ? `${p.holding_days}d` : "\u2014"}
                   </TableCell>
-                  <TableCell className="text-xs text-muted-foreground">{p.trigger_source ?? "\u2014"}</TableCell>
+                  <TableCell className={`text-xs font-medium ${exitColor}`}>{exitReason}</TableCell>
+                  <TableCell>
+                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground">
+                      {triggerLabel[p.trigger_source ?? ""] ?? p.trigger_source ?? "\u2014"}
+                    </span>
+                  </TableCell>
                   <TableCell className="text-xs text-muted-foreground max-w-[160px] truncate" title={p.notes ?? ""}>
                     {p.notes?.slice(0, 60) ?? "\u2014"}
                   </TableCell>
                 </TableRow>
-              ))}
+                );
+              })}
             </TableBody>
           </Table>
 

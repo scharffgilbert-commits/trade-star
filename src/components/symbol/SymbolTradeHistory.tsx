@@ -106,6 +106,7 @@ export default function SymbolTradeHistory({ symbol }: SymbolTradeHistoryProps) 
                 <TableHead className="text-[10px] text-right">Exit</TableHead>
                 <TableHead className="text-[10px] text-right">P&L</TableHead>
                 <TableHead className="text-[10px] text-right">Tage</TableHead>
+                <TableHead className="text-[10px]">Exit-Grund</TableHead>
                 <TableHead className="text-[10px]">Trigger</TableHead>
                 <TableHead className="text-[10px]">Datum</TableHead>
               </TableRow>
@@ -116,6 +117,32 @@ export default function SymbolTradeHistory({ symbol }: SymbolTradeHistoryProps) 
                 const isLong = trade.position_type === "LONG";
                 const accountLabel = ACCOUNTS[trade.account_id]?.label ?? `#${trade.account_id}`;
                 const accountColor = ACCOUNTS[trade.account_id]?.color ?? "hsl(215, 12%, 55%)";
+
+                const exitReasonLabel: Record<string, string> = {
+                  STOPPED_OUT: "Stop Loss",
+                  TP_HIT: "Take Profit",
+                };
+                const triggerLabel: Record<string, string> = {
+                  AUTO_SIGNAL: "Auto-Signal",
+                  STOP_LOSS: "Stop Loss",
+                  TRAILING_STOP: "Trailing Stop",
+                  TAKE_PROFIT: "Take Profit",
+                  MAX_HOLDING: "Max Haltezeit",
+                  MANUAL: "Manuell",
+                  SIGNAL_REVERSAL: "Signal-Umkehr",
+                  PREMIUM_COUNTER: "Premium Counter",
+                  AUTO_RULE: "Auto Regel",
+                  BACKTEST_END: "Backtest Ende",
+                  EXPIRED: "Abgelaufen",
+                };
+                const isClosed = ["CLOSED", "STOPPED_OUT", "TP_HIT"].includes(trade.position_status);
+                const exitReason = isClosed
+                  ? (exitReasonLabel[trade.position_status]
+                    ?? triggerLabel[trade.trigger_source ?? ""] ?? "Close")
+                  : "—";
+                const exitColor = trade.position_status === "STOPPED_OUT" ? "text-bearish"
+                  : trade.position_status === "TP_HIT" ? "text-bullish"
+                  : "text-muted-foreground";
 
                 return (
                   <TableRow
@@ -163,8 +190,17 @@ export default function SymbolTradeHistory({ symbol }: SymbolTradeHistoryProps) 
                     <TableCell className="text-right font-mono text-[10px] text-muted-foreground">
                       {trade.holding_days ?? "—"}
                     </TableCell>
-                    <TableCell className="text-[10px] text-muted-foreground">
-                      {trade.trigger_source ?? "—"}
+                    <TableCell className={cn("text-[10px] font-medium", exitColor)}>
+                      {exitReason}
+                    </TableCell>
+                    <TableCell>
+                      {isClosed && trade.trigger_source ? (
+                        <span className="text-[9px] px-1 py-0.5 rounded bg-muted text-muted-foreground">
+                          {triggerLabel[trade.trigger_source] ?? trade.trigger_source}
+                        </span>
+                      ) : (
+                        <span className="text-[10px] text-muted-foreground">—</span>
+                      )}
                     </TableCell>
                     <TableCell className="text-[10px] text-muted-foreground">
                       {new Date(trade.opened_at).toLocaleDateString("de-DE", { day: "2-digit", month: "2-digit", year: "2-digit" })}
