@@ -141,7 +141,7 @@ async function gatherStrandContext(
 
   switch (strandType) {
     case "technical": {
-      // All 42 indicators + scoring
+      // All 43 indicators (incl. CANDLE_SUMMARY) + scoring
       const [indicatorRes, scoreResults] = await Promise.all([
         supabase
           .from("technical_indicators")
@@ -200,6 +200,7 @@ async function gatherStrandContext(
           .in("indicator_name", [
             "CROC_ALLIGATOR", "CROC_RAINBOW", "CROC_STATUS", "CROC_DISTANCE", "CROC_EXHAUSTION",
             "SUPERTREND_10_3", "AROON_25", "SAR", "ADX_14", "DI_14", "ICHIMOKU",
+            "CANDLE_SUMMARY",
           ]),
         supabase
           .from("croc_ice_signals")
@@ -244,8 +245,8 @@ async function gatherStrandContext(
     }
 
     case "fusion": {
-      // Load all 3 previous strand analyses + Lochstreifen + Premium + Setups + Market Regime
-      const [strandRes, lochstreifenRes, premiumRes, setupsRes, weightsConfig] = await Promise.all([
+      // Load all 3 previous strand analyses + Lochstreifen + Premium + Setups + Market Regime + Candlestick
+      const [strandRes, lochstreifenRes, premiumRes, setupsRes, weightsConfig, candleRes] = await Promise.all([
         supabase
           .from("ai_strand_analyses")
           .select("strand_type, direction, confidence, analysis_text, key_findings, scores")
@@ -277,10 +278,18 @@ async function gatherStrandContext(
           .select("config_value")
           .eq("config_key", "strand_weights")
           .single(),
+        supabase
+          .from("technical_indicators")
+          .select("indicator_name, value_1, value_2, value_3, value_4, value_5")
+          .eq("symbol", symbol)
+          .eq("date", analysisDate)
+          .eq("indicator_name", "CANDLE_SUMMARY")
+          .single(),
       ]);
 
       context.strand_analyses = strandRes.data ?? [];
       context.lochstreifen = lochstreifenRes.data ?? null;
+      context.candle_summary = candleRes.data ?? null;
       context.premium_signals = premiumRes.data ?? [];
       context.detected_setups = setupsRes.data ?? [];
       context.market_regime = lochstreifenRes.data?.metadata?.market_regime ?? "UNKNOWN";
@@ -358,7 +367,34 @@ ${ctx.indicators.map((i: any) => `${i.indicator_name}: v1=${i.value_1}${i.value_
 - Volume/VWAP: ${ctx.scores.volume_vwap.long}/${ctx.scores.volume_vwap.short}
 - Multi-Indicator: ${ctx.scores.multi_indicator.long}/${ctx.scores.multi_indicator.short}
 
-Analysiere: Trend-Richtung, Momentum-Staerke, Volatilitaets-Regime, Support/Resistance-Level, Divergenzen.
+**CANDLESTICK PATTERN ANALYSE:**
+${(() => {
+  const candleSummary = ctx.indicators.find((i: any) => i.indicator_name === 'CANDLE_SUMMARY');
+  if (!candleSummary || candleSummary.value_4 === 0) return 'Keine Candlestick-Patterns erkannt.';
+  const patternNames: Record<number, string> = {
+    1:'HAMMER',2:'INV_HAMMER',3:'SHOOTING_STAR',4:'HANGING_MAN',5:'DOJI',6:'SPINNING_TOP',
+    7:'MARUBOZU',8:'BULL_ENGULFING',9:'BEAR_ENGULFING',10:'PIERCING_LINE',11:'DARK_CLOUD',
+    12:'HARAMI',13:'MORNING_STAR',14:'EVENING_STAR',15:'THREE_SOLDIERS',16:'THREE_CROWS'
+  };
+  const dirLabels: Record<number, string> = {1:'bullish',[-1]:'bearish',0:'neutral'};
+  const primary = patternNames[Number(candleSummary.value_1)] ?? 'UNKNOWN';
+  const dir = candleSummary.value_2 > 0 ? 'bullish' : candleSummary.value_2 < 0 ? 'bearish' : 'neutral';
+  const strength = Number(candleSummary.value_3);
+  const count = Number(candleSummary.value_4);
+  const secondary = candleSummary.value_5 ? patternNames[Number(candleSummary.value_5)] : null;
+  const allCandles = ctx.indicators.filter((i: any) => i.indicator_name.startsWith('CANDLE_') && i.indicator_name !== 'CANDLE_SUMMARY');
+  const patternList = allCandles.map((c: any) => c.indicator_name.replace('CANDLE_','')).join(', ');
+  return \`Primaer: \${primary} (\${dir}, Staerke \${strength}/3)\${secondary ? \`, Sekundaer: \${patternNames[Number(candleSummary.value_5)]}\` : ''}\nAlle Patterns (\${count}): \${patternList || primary}\nWICHTIG: Starke Umkehr-Patterns (Staerke 3) GEGEN Trend = WARNSIGNAL!\`;
+})()}
+
+CANDLESTICK REFERENZ:
+1=HAMMER(bull,2), 2=INV_HAMMER(bull,1), 3=SHOOTING_STAR(bear,2), 4=HANGING_MAN(bear,1),
+5=DOJI(neutral,2), 6=SPINNING_TOP(neutral,1), 7=MARUBOZU(trend,3),
+8=BULL_ENGULFING(bull,3), 9=BEAR_ENGULFING(bear,3), 10=PIERCING(bull,2),
+11=DARK_CLOUD(bear,2), 12=HARAMI(neutral,1), 13=MORNING_STAR(bull,3),
+14=EVENING_STAR(bear,3), 15=THREE_SOLDIERS(bull,3), 16=THREE_CROWS(bear,3)
+
+Analysiere: Trend-Richtung, Momentum-Staerke, Volatilitaets-Regime, Support/Resistance-Level, Divergenzen, Candlestick-Pattern-Bestaetigung/Warnung.
 
 Antworte NUR mit JSON:
 {
@@ -371,7 +407,8 @@ Antworte NUR mit JSON:
     "volatility": "HIGH|NORMAL|LOW",
     "support": Zahl,
     "resistance": Zahl,
-    "divergences": "Beschreibung oder null"
+    "divergences": "Beschreibung oder null",
+    "candlestick": "Pattern-Name und Bewertung (z.B. BEAR_ENGULFING - starke Umkehr-Warnung) oder null"
   }
 }`;
 
@@ -463,8 +500,17 @@ ${setupText}
 8. "Was nicht faellt, das steigt" — ICE Bear 9 ohne neues Tief nach 5 Kerzen = LONG!
 9. Gaensemarsch: Setter-Wechsel ist der erste Hinweis, Trend folgt spaeter.
 10. Trend-Tage zaehlen: >5 Tage gleicher Trend = starke Bestaetigung.
+11. CANDLESTICK CONFIRMATION: ${(() => {
+  const cs = ctx.croc_indicators.find((i: any) => i.indicator_name === 'CANDLE_SUMMARY');
+  if (!cs || Number(cs.value_4) === 0) return 'Kein Candlestick-Pattern erkannt.';
+  const names: Record<number,string> = {1:'HAMMER',2:'INV_HAMMER',3:'SHOOTING_STAR',4:'HANGING_MAN',5:'DOJI',6:'SPINNING_TOP',7:'MARUBOZU',8:'BULL_ENGULFING',9:'BEAR_ENGULFING',10:'PIERCING',11:'DARK_CLOUD',12:'HARAMI',13:'MORNING_STAR',14:'EVENING_STAR',15:'THREE_SOLDIERS',16:'THREE_CROWS'};
+  const p = names[Number(cs.value_1)] ?? 'UNKNOWN';
+  const d = Number(cs.value_2) > 0 ? 'bullish' : Number(cs.value_2) < 0 ? 'bearish' : 'neutral';
+  const s = Number(cs.value_3);
+  return \`Erkannt: \${p} (\${d}, Staerke \${s}/3). Bei Staerke >= 2 GEGEN Alligator-Richtung → Konfidenz -10 bis -20. Bei BESTAETIGUNG der CROC-Richtung → Konfidenz +5 bis +10. DOJI am Ende einer FEEDING-Phase → Warnung vor SATED-Uebergang.\`;
+})()}
 
-Analysiere: Alligator-Phase, Lochstreifen-Alignment (wie viele von 6 Zeilen gleiche Richtung), ICE Signal-Cluster, Premium-Signal-Prioritaet, Setup-Qualitaet, Erschoepfungsanzeichen.
+Analysiere: Alligator-Phase, Lochstreifen-Alignment (wie viele von 6 Zeilen gleiche Richtung), ICE Signal-Cluster, Premium-Signal-Prioritaet, Setup-Qualitaet, Erschoepfungsanzeichen, Candlestick-Bestaetigung.
 
 Antworte NUR mit JSON:
 {
@@ -505,6 +551,17 @@ Antworte NUR mit JSON:
         ? `Status:${ls.status}(${ls.status_days}d) Kerze:${ls.candle_color} Wolke:${ls.cloud_color}(${ls.cloud_days}d) Trend:${ls.trend}(${ls.trend_days}d) Setter:${ls.setter}(${ls.setter_days}d) Wave:${ls.wave}`
         : "Nicht verfuegbar";
 
+      // Candlestick Pattern für Fusion
+      const cs = ctx.candle_summary;
+      const candlePatternNames: Record<number, string> = {
+        1:'HAMMER',2:'INV_HAMMER',3:'SHOOTING_STAR',4:'HANGING_MAN',5:'DOJI',6:'SPINNING_TOP',
+        7:'MARUBOZU',8:'BULL_ENGULFING',9:'BEAR_ENGULFING',10:'PIERCING_LINE',11:'DARK_CLOUD',
+        12:'HARAMI',13:'MORNING_STAR',14:'EVENING_STAR',15:'THREE_SOLDIERS',16:'THREE_CROWS'
+      };
+      const candleText = cs && Number(cs.value_4) > 0
+        ? `${candlePatternNames[Number(cs.value_1)] ?? 'UNKNOWN'} (${Number(cs.value_2) > 0 ? 'bullish' : Number(cs.value_2) < 0 ? 'bearish' : 'neutral'}, Staerke ${Number(cs.value_3)}/3, ${Number(cs.value_4)} Pattern(s))`
+        : "Keine Patterns";
+
       return `Du bist der Chef-Analyst eines CROC/ICE Trading-Desks (Crocomichi nach Andre Tiedje). Bewerte die 3 Strand-Analysen fuer ${symbol} und treffe die finale Handelsentscheidung. CROC/ICE ist der DOMINANTE Strang! Gib NUR ein JSON-Objekt zurueck.
 
 **Symbol:** ${symbol} | **Kurs:** $${price} | **Datum:** ${date}
@@ -514,6 +571,7 @@ Antworte NUR mit JSON:
 ${ctx.prices.slice(0, 5).map((p: any) => `${p.date}: O:${p.open} H:${p.high} L:${p.low} C:${p.close} V:${p.volume}`).join("\n")}
 
 **Lochstreifen:** ${lochstreifenText}
+**Candlestick-Pattern:** ${candleText}
 **Premium-Signale:** ${premiumText}
 **Trading-Setups:**
 ${setupText}
@@ -538,6 +596,7 @@ ${strandSummaries || "Keine Strand-Analysen verfuegbar"}
 8. LONG wenn gewichteter Score > 55 UND mindestens 2 Straenge LONG UND CROC/ICE Strang LONG.
 9. SHORT wenn gewichteter Score > 55 UND mindestens 2 Straenge SHORT UND CROC/ICE Strang SHORT.
 10. CASH wenn Konfidenz < 45, Straenge widerspruechlich, oder CROC/ICE = NEUTRAL.
+11. **CANDLESTICK OVERRIDE:** Starkes Umkehr-Pattern (Staerke 3: ENGULFING, MORNING/EVENING_STAR, THREE_SOLDIERS/CROWS) ENTGEGEN Trade-Richtung → Konfidenz -15. Falls Konfidenz dadurch < 55 → CASH. Bei Pattern-BESTAETIGUNG der Richtung → Konfidenz +5 (max 95). Erwaehne das Candlestick-Pattern im reasoning.
 
 Antworte NUR mit JSON:
 {

@@ -1289,6 +1289,41 @@ async function checkTradingRules(
         reason = `Margin ${marginPct.toFixed(1)}% vs max ${maxMarginPct}%`;
         break;
       }
+      case "CANDLE_CONFIRMATION": {
+        // Blockiert Entry bei starkem Umkehr-Candlestick-Pattern entgegen Trade-Richtung
+        const today = new Date().toISOString().slice(0, 10);
+        const { data: candle } = await supabase
+          .from("technical_indicators")
+          .select("value_1, value_2, value_3, value_4")
+          .eq("symbol", decision.symbol)
+          .eq("indicator_name", "CANDLE_SUMMARY")
+          .eq("date", today)
+          .single();
+
+        if (candle && Number(candle.value_4) > 0) {
+          const patternDir = Number(candle.value_2);  // 1=bull, -1=bear, 0=neutral
+          const strength = Number(candle.value_3);     // 1-3
+          const patternNames: Record<number, string> = {
+            1:'HAMMER',2:'INV_HAMMER',3:'SHOOTING_STAR',4:'HANGING_MAN',5:'DOJI',6:'SPINNING_TOP',
+            7:'MARUBOZU',8:'BULL_ENGULFING',9:'BEAR_ENGULFING',10:'PIERCING',11:'DARK_CLOUD',
+            12:'HARAMI',13:'MORNING_STAR',14:'EVENING_STAR',15:'THREE_SOLDIERS',16:'THREE_CROWS'
+          };
+          const patternName = patternNames[Number(candle.value_1)] ?? 'UNKNOWN';
+
+          // Block: Starkes Umkehr-Pattern (Stärke >= 2) entgegen Trade-Richtung
+          const isContra = (decision.action_type === "LONG" && patternDir === -1)
+                        || (decision.action_type === "SHORT" && patternDir === 1);
+          const minStrength = Number(ruleValue?.min_strength ?? 2);
+          passed = !(isContra && strength >= minStrength);
+          reason = passed
+            ? `Candlestick ${patternName} (dir=${patternDir}, str=${strength}) bestätigt Entry`
+            : `Kontra-Pattern ${patternName} (dir=${patternDir}, str=${strength}) blockiert ${decision.action_type} Entry`;
+        } else {
+          passed = true;
+          reason = "Kein Candlestick-Pattern erkannt — Entry erlaubt";
+        }
+        break;
+      }
       default:
         reason = `Unknown rule type: ${rule.rule_type}`;
     }

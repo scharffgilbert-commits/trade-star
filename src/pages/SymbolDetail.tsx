@@ -14,6 +14,7 @@ import ActiveSetups from "@/components/symbol/ActiveSetups";
 import MarketRegimeChart from "@/components/symbol/MarketRegimeChart";
 import PremiumSignalTimeline from "@/components/symbol/PremiumSignalTimeline";
 import SymbolTradeHistory from "@/components/symbol/SymbolTradeHistory";
+import CandlestickPatternCard from "@/components/symbol/CandlestickPatternCard";
 import { cn } from "@/lib/utils";
 
 export default function SymbolDetail() {
@@ -194,8 +195,9 @@ export default function SymbolDetail() {
         <MarketRegimeChart symbol={symbol} />
       </div>
 
-      {/* ICE Signals + Indicators */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      {/* Candlestick Patterns + ICE Signals + Indicators */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <CandlestickPatternCard symbol={symbol} />
         <IceSignalsList symbol={symbol} />
         <IndicatorsTable symbol={symbol} />
       </div>
