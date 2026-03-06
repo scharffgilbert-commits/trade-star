@@ -214,6 +214,9 @@ async function handleAutoTrade(supabase: any, body: any) {
     throw new Error("Demo account not found");
   }
 
+  // Shadow Portfolio: takes ALL trades, no rules, fixed position size
+  const isShadow = account.is_shadow === true;
+
   // 3. Get today's trading decisions (only LONG/SHORT, not CASH)
   const today = new Date().toISOString().slice(0, 10);
   const { data: decisions } = await supabase
@@ -259,46 +262,50 @@ async function handleAutoTrade(supabase: any, body: any) {
       continue;
     }
 
-    // Check trading rules (with dynamic strategy params)
-    const ruleCheck = await checkTradingRules(supabase, accountId, account, decision, strategyParams);
-    if (!ruleCheck.allPassed) {
-      const failedRules = ruleCheck.results.filter((r: any) => !r.passed).map((r: any) => r.rule).join(", ");
-      if (autoConfig.mode === "AUTO") {
+    // Check trading rules (skip for shadow accounts — they take ALL trades)
+    if (!isShadow) {
+      const ruleCheck = await checkTradingRules(supabase, accountId, account, decision, strategyParams);
+      if (!ruleCheck.allPassed) {
+        const failedRules = ruleCheck.results.filter((r: any) => !r.passed).map((r: any) => r.rule).join(", ");
         results.push({ symbol, status: "BLOCKED", reason: `Rules failed: ${failedRules}` });
-      } else {
-        results.push({ symbol, status: "BLOCKED", reason: `Rules failed: ${failedRules}` });
+        continue;
       }
-      continue;
     }
 
-    // Calculate position size (risk-based: dynamic % from strategy_config)
-    const riskPercent = strategyParams.risk_per_trade_percent;
-    const riskAmount = account.current_balance * (riskPercent / 100);
     const entryPrice = Number(decision.entry_price);
     const stopLoss = Number(decision.stop_loss);
-    const priceDiff = Math.abs(entryPrice - stopLoss);
-
     let quantity = 1;
-    if (priceDiff > 0) {
-      quantity = Math.max(1, Math.floor(riskAmount / priceDiff));
-    }
 
-    // Cap at max position size (dynamic from strategy_config)
-    const maxPositionSize = strategyParams.max_position_size;
-    const positionValue = quantity * entryPrice;
-    if (positionValue > maxPositionSize) {
-      quantity = Math.floor(maxPositionSize / entryPrice);
-    }
+    if (isShadow) {
+      // Shadow Portfolio: fixed $10,000 per position (standardized for analysis)
+      quantity = Math.max(1, Math.floor(10000 / entryPrice));
+    } else {
+      // Normal accounts: risk-based position sizing
+      const riskPercent = strategyParams.risk_per_trade_percent;
+      const riskAmount = account.current_balance * (riskPercent / 100);
+      const priceDiff = Math.abs(entryPrice - stopLoss);
 
-    // Also cap to available balance
-    const availableBalance = account.current_balance - (account.reserved_balance ?? 0);
-    if (quantity * entryPrice > availableBalance) {
-      quantity = Math.floor(availableBalance / entryPrice);
-    }
+      if (priceDiff > 0) {
+        quantity = Math.max(1, Math.floor(riskAmount / priceDiff));
+      }
 
-    if (quantity < 1) {
-      results.push({ symbol, status: "SKIPPED", reason: "Insufficient balance" });
-      continue;
+      // Cap at max position size (dynamic from strategy_config)
+      const maxPositionSize = strategyParams.max_position_size;
+      const positionValue = quantity * entryPrice;
+      if (positionValue > maxPositionSize) {
+        quantity = Math.floor(maxPositionSize / entryPrice);
+      }
+
+      // Also cap to available balance
+      const availableBalance = account.current_balance - (account.reserved_balance ?? 0);
+      if (quantity * entryPrice > availableBalance) {
+        quantity = Math.floor(availableBalance / entryPrice);
+      }
+
+      if (quantity < 1) {
+        results.push({ symbol, status: "SKIPPED", reason: "Insufficient balance" });
+        continue;
+      }
     }
 
     // V6.0: Determine entry_type and setup info from AI strand analysis
@@ -317,7 +324,8 @@ async function handleAutoTrade(supabase: any, body: any) {
     const trailingStopType = fusionFindings.trailing_stop_type || "PERCENT";
 
     // V6.0: If STOP_BUY/STOP_SELL, create PENDING position with trigger price
-    const isPendingOrder = entryType === "STOP_BUY" || entryType === "STOP_SELL";
+    // Shadow: always MARKET entry (no pending orders)
+    const isPendingOrder = !isShadow && (entryType === "STOP_BUY" || entryType === "STOP_SELL");
 
     // V6.0: Get detected setup details for stop levels
     const { data: activeSetup } = await supabase
@@ -340,7 +348,10 @@ async function handleAutoTrade(supabase: any, body: any) {
     // V6.0: For pending orders, use setup entry price as trigger
     const pendingEntryPrice = isPendingOrder ? (activeSetup?.entry_price || entryPrice) : null;
 
-    if (autoConfig.mode === "CONFIRM" || isPendingOrder) {
+    // Shadow: always AUTO mode
+    const effectiveMode = isShadow ? "AUTO" : autoConfig.mode;
+
+    if (effectiveMode === "CONFIRM" || isPendingOrder) {
       // Create pending position (for user confirmation OR stop-buy/sell orders)
       const posStatus = isPendingOrder ? "PENDING" : "PENDING";
       const { error } = await supabase.from("demo_positions").insert({
@@ -380,7 +391,7 @@ async function handleAutoTrade(supabase: any, body: any) {
         direction,
         entry_type: entryType,
       });
-    } else if (autoConfig.mode === "AUTO") {
+    } else if (effectiveMode === "AUTO") {
       // Open position directly (MARKET orders)
       const result = await openPosition(supabase, accountId, account, {
         symbol,

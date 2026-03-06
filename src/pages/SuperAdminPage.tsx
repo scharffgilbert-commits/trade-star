@@ -12,11 +12,16 @@ import {
   Shield,
   UserCheck,
   Clock,
+  Eye,
+  TrendingUp,
+  TrendingDown,
+  ArrowUpDown,
 } from "lucide-react";
 
 // ━━━ Tab Navigation ━━━
 const tabs = [
   { id: "users", label: "Userverwaltung", icon: Users },
+  { id: "shadow", label: "Shadow Portfolio", icon: Eye },
   { id: "strategy", label: "Strategy Config", icon: Settings },
   { id: "pipeline", label: "Pipeline Monitor", icon: Activity },
   { id: "health", label: "System Health", icon: Server },
@@ -54,6 +59,7 @@ export default function SuperAdminPage() {
 
       {/* Tab Content */}
       {activeTab === "users" && <UserManagementTab />}
+      {activeTab === "shadow" && <ShadowPortfolioTab />}
       {activeTab === "strategy" && <StrategyConfigTab />}
       {activeTab === "pipeline" && <PipelineMonitorTab />}
       {activeTab === "health" && <SystemHealthTab />}
@@ -242,7 +248,347 @@ function UserManagementTab() {
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-// TAB 2: STRATEGY CONFIG
+// TAB 2: SHADOW PORTFOLIO
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+const SHADOW_ACCOUNT_ID = 6;
+
+function ShadowPortfolioTab() {
+  const [view, setView] = useState<"overview" | "open" | "closed">("overview");
+
+  // Account info
+  const { data: account } = useQuery({
+    queryKey: ["shadow-account"],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("demo_accounts")
+        .select("*")
+        .eq("id", SHADOW_ACCOUNT_ID)
+        .single();
+      if (error) throw error;
+      return data;
+    },
+  });
+
+  // Open positions
+  const { data: openPositions = [] } = useQuery({
+    queryKey: ["shadow-open-positions"],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("demo_positions")
+        .select("*")
+        .eq("account_id", SHADOW_ACCOUNT_ID)
+        .eq("position_status", "OPEN")
+        .order("opened_at", { ascending: false });
+      if (error) throw error;
+      return data;
+    },
+  });
+
+  // Closed positions
+  const { data: closedPositions = [] } = useQuery({
+    queryKey: ["shadow-closed-positions"],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("demo_positions")
+        .select("*")
+        .eq("account_id", SHADOW_ACCOUNT_ID)
+        .in("position_status", ["CLOSED", "STOPPED_OUT", "TP_HIT"])
+        .order("closed_at", { ascending: false });
+      if (error) throw error;
+      return data;
+    },
+  });
+
+  // Stats calculation
+  const totalTrades = closedPositions.length;
+  const winners = closedPositions.filter((p: any) => Number(p.pnl_amount) > 0);
+  const losers = closedPositions.filter((p: any) => Number(p.pnl_amount) <= 0);
+  const winRate = totalTrades > 0 ? ((winners.length / totalTrades) * 100).toFixed(1) : "0";
+  const totalPnl = closedPositions.reduce((s: number, p: any) => s + Number(p.pnl_amount ?? 0), 0);
+  const avgPnl = totalTrades > 0 ? totalPnl / totalTrades : 0;
+  const avgWin = winners.length > 0
+    ? winners.reduce((s: number, p: any) => s + Number(p.pnl_amount), 0) / winners.length
+    : 0;
+  const avgLoss = losers.length > 0
+    ? losers.reduce((s: number, p: any) => s + Number(p.pnl_amount), 0) / losers.length
+    : 0;
+  const profitFactor = avgLoss !== 0
+    ? Math.abs(avgWin * winners.length / (avgLoss * losers.length))
+    : 0;
+
+  // Unrealized P&L for open positions
+  const unrealizedPnl = openPositions.reduce((s: number, p: any) => {
+    const entry = Number(p.entry_price);
+    const current = Number(p.current_price ?? entry);
+    const qty = Number(p.quantity);
+    const pnl = p.position_type === "LONG"
+      ? (current - entry) * qty
+      : (entry - current) * qty;
+    return s + pnl;
+  }, 0);
+
+  // Performance by confidence bracket
+  const confBrackets = [
+    { label: "90+", min: 90, max: 100 },
+    { label: "80-89", min: 80, max: 89 },
+    { label: "70-79", min: 70, max: 79 },
+    { label: "60-69", min: 60, max: 69 },
+    { label: "<60", min: 0, max: 59 },
+  ];
+
+  const confStats = confBrackets.map((bracket) => {
+    const trades = closedPositions.filter((p: any) => {
+      const conf = Number(p.notes?.match(/confidence[:\s]*(\d+)/i)?.[1] ?? 0);
+      return conf >= bracket.min && conf <= bracket.max;
+    });
+    const wins = trades.filter((p: any) => Number(p.pnl_amount) > 0).length;
+    return {
+      ...bracket,
+      total: trades.length,
+      wins,
+      winRate: trades.length > 0 ? ((wins / trades.length) * 100).toFixed(0) : "-",
+      pnl: trades.reduce((s: number, p: any) => s + Number(p.pnl_amount ?? 0), 0),
+    };
+  });
+
+  // Performance by direction
+  const longTrades = closedPositions.filter((p: any) => p.position_type === "LONG");
+  const shortTrades = closedPositions.filter((p: any) => p.position_type === "SHORT");
+  const longWins = longTrades.filter((p: any) => Number(p.pnl_amount) > 0).length;
+  const shortWins = shortTrades.filter((p: any) => Number(p.pnl_amount) > 0).length;
+
+  // Top/Bottom performers
+  const sortedByPnl = [...closedPositions].sort((a: any, b: any) => Number(b.pnl_amount) - Number(a.pnl_amount));
+  const topTrades = sortedByPnl.slice(0, 5);
+  const bottomTrades = sortedByPnl.slice(-5).reverse();
+
+  return (
+    <div className="space-y-4">
+      {/* Sub-nav */}
+      <div className="flex gap-2">
+        {(["overview", "open", "closed"] as const).map((v) => (
+          <button
+            key={v}
+            onClick={() => setView(v)}
+            className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
+              view === v
+                ? "bg-primary/15 text-primary"
+                : "text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            {v === "overview" ? "Analyse" : v === "open" ? `Offen (${openPositions.length})` : `Geschlossen (${closedPositions.length})`}
+          </button>
+        ))}
+      </div>
+
+      {view === "overview" && (
+        <div className="space-y-4">
+          {/* KPI Cards */}
+          <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3">
+            {[
+              { label: "Offene Trades", value: openPositions.length, color: "text-primary" },
+              { label: "Geschl. Trades", value: totalTrades, color: "text-foreground" },
+              { label: "Win Rate", value: `${winRate}%`, color: Number(winRate) >= 50 ? "text-bullish" : "text-bearish" },
+              { label: "Profit Factor", value: profitFactor.toFixed(2), color: profitFactor >= 1 ? "text-bullish" : "text-bearish" },
+              { label: "Realisiert", value: `$${totalPnl.toFixed(0)}`, color: totalPnl >= 0 ? "text-bullish" : "text-bearish" },
+              { label: "Unrealisiert", value: `$${unrealizedPnl.toFixed(0)}`, color: unrealizedPnl >= 0 ? "text-bullish" : "text-bearish" },
+            ].map((card) => (
+              <div key={card.label} className="bg-card border border-border rounded-lg p-3">
+                <p className="text-[10px] text-muted-foreground">{card.label}</p>
+                <p className={`text-lg font-bold font-mono ${card.color}`}>{card.value}</p>
+              </div>
+            ))}
+          </div>
+
+          {/* Direction Performance */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div className="bg-card border border-border rounded-lg p-4">
+              <h3 className="text-sm font-medium mb-3 flex items-center gap-2">
+                <TrendingUp className="h-4 w-4 text-bullish" /> LONG Performance
+              </h3>
+              <div className="space-y-1 text-xs font-mono">
+                <div className="flex justify-between"><span className="text-muted-foreground">Trades</span><span>{longTrades.length}</span></div>
+                <div className="flex justify-between"><span className="text-muted-foreground">Gewonnen</span><span className="text-bullish">{longWins}</span></div>
+                <div className="flex justify-between"><span className="text-muted-foreground">Win Rate</span>
+                  <span>{longTrades.length > 0 ? ((longWins / longTrades.length) * 100).toFixed(0) : 0}%</span>
+                </div>
+                <div className="flex justify-between"><span className="text-muted-foreground">P&L</span>
+                  <span className={longTrades.reduce((s: number, p: any) => s + Number(p.pnl_amount ?? 0), 0) >= 0 ? "text-bullish" : "text-bearish"}>
+                    ${longTrades.reduce((s: number, p: any) => s + Number(p.pnl_amount ?? 0), 0).toFixed(0)}
+                  </span>
+                </div>
+              </div>
+            </div>
+            <div className="bg-card border border-border rounded-lg p-4">
+              <h3 className="text-sm font-medium mb-3 flex items-center gap-2">
+                <TrendingDown className="h-4 w-4 text-bearish" /> SHORT Performance
+              </h3>
+              <div className="space-y-1 text-xs font-mono">
+                <div className="flex justify-between"><span className="text-muted-foreground">Trades</span><span>{shortTrades.length}</span></div>
+                <div className="flex justify-between"><span className="text-muted-foreground">Gewonnen</span><span className="text-bullish">{shortWins}</span></div>
+                <div className="flex justify-between"><span className="text-muted-foreground">Win Rate</span>
+                  <span>{shortTrades.length > 0 ? ((shortWins / shortTrades.length) * 100).toFixed(0) : 0}%</span>
+                </div>
+                <div className="flex justify-between"><span className="text-muted-foreground">P&L</span>
+                  <span className={shortTrades.reduce((s: number, p: any) => s + Number(p.pnl_amount ?? 0), 0) >= 0 ? "text-bullish" : "text-bearish"}>
+                    ${shortTrades.reduce((s: number, p: any) => s + Number(p.pnl_amount ?? 0), 0).toFixed(0)}
+                  </span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Avg Win / Avg Loss */}
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            {[
+              { label: "Avg Win", value: `$${avgWin.toFixed(0)}`, color: "text-bullish" },
+              { label: "Avg Loss", value: `$${avgLoss.toFixed(0)}`, color: "text-bearish" },
+              { label: "Avg P&L", value: `$${avgPnl.toFixed(0)}`, color: avgPnl >= 0 ? "text-bullish" : "text-bearish" },
+              { label: "Avg Haltezeit", value: `${totalTrades > 0 ? (closedPositions.reduce((s: number, p: any) => s + (p.holding_days ?? 0), 0) / totalTrades).toFixed(1) : "0"} Tage`, color: "text-foreground" },
+            ].map((card) => (
+              <div key={card.label} className="bg-card border border-border rounded-lg p-3">
+                <p className="text-[10px] text-muted-foreground">{card.label}</p>
+                <p className={`text-lg font-bold font-mono ${card.color}`}>{card.value}</p>
+              </div>
+            ))}
+          </div>
+
+          {/* Top/Bottom Trades */}
+          {topTrades.length > 0 && (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div className="bg-card border border-border rounded-lg p-4">
+                <h3 className="text-sm font-medium mb-2 text-bullish">Top 5 Trades</h3>
+                <div className="space-y-1">
+                  {topTrades.map((t: any) => (
+                    <div key={t.id} className="flex justify-between text-xs font-mono">
+                      <span>{t.symbol} <span className="text-muted-foreground">{t.position_type}</span></span>
+                      <span className="text-bullish">+${Number(t.pnl_amount).toFixed(0)}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+              <div className="bg-card border border-border rounded-lg p-4">
+                <h3 className="text-sm font-medium mb-2 text-bearish">Bottom 5 Trades</h3>
+                <div className="space-y-1">
+                  {bottomTrades.map((t: any) => (
+                    <div key={t.id} className="flex justify-between text-xs font-mono">
+                      <span>{t.symbol} <span className="text-muted-foreground">{t.position_type}</span></span>
+                      <span className="text-bearish">${Number(t.pnl_amount).toFixed(0)}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {view === "open" && (
+        <div className="border border-border rounded-lg overflow-hidden">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="bg-muted/50 border-b border-border">
+                <th className="text-left px-3 py-2 font-medium">Symbol</th>
+                <th className="text-left px-3 py-2 font-medium">Richtung</th>
+                <th className="text-right px-3 py-2 font-medium">Menge</th>
+                <th className="text-right px-3 py-2 font-medium">Entry</th>
+                <th className="text-right px-3 py-2 font-medium">Aktuell</th>
+                <th className="text-right px-3 py-2 font-medium">P&L</th>
+                <th className="text-left px-3 py-2 font-medium">Offen seit</th>
+              </tr>
+            </thead>
+            <tbody>
+              {openPositions.map((pos: any) => {
+                const entry = Number(pos.entry_price);
+                const current = Number(pos.current_price ?? entry);
+                const qty = Number(pos.quantity);
+                const pnl = pos.position_type === "LONG"
+                  ? (current - entry) * qty
+                  : (entry - current) * qty;
+                const pnlPct = ((pos.position_type === "LONG" ? current - entry : entry - current) / entry) * 100;
+                return (
+                  <tr key={pos.id} className="border-b border-border last:border-0 hover:bg-muted/20">
+                    <td className="px-3 py-2 font-mono text-xs font-medium">{pos.symbol}</td>
+                    <td className="px-3 py-2">
+                      <span className={`text-xs px-1.5 py-0.5 rounded ${pos.position_type === "LONG" ? "bg-bullish/15 text-bullish" : "bg-bearish/15 text-bearish"}`}>
+                        {pos.position_type}
+                      </span>
+                    </td>
+                    <td className="px-3 py-2 text-right font-mono text-xs">{qty}</td>
+                    <td className="px-3 py-2 text-right font-mono text-xs">${entry.toFixed(2)}</td>
+                    <td className="px-3 py-2 text-right font-mono text-xs">${current.toFixed(2)}</td>
+                    <td className={`px-3 py-2 text-right font-mono text-xs font-medium ${pnl >= 0 ? "text-bullish" : "text-bearish"}`}>
+                      ${pnl.toFixed(0)} ({pnlPct.toFixed(1)}%)
+                    </td>
+                    <td className="px-3 py-2 text-xs text-muted-foreground">
+                      {pos.opened_at ? new Date(pos.opened_at).toLocaleDateString("de-DE") : "-"}
+                    </td>
+                  </tr>
+                );
+              })}
+              {openPositions.length === 0 && (
+                <tr><td colSpan={7} className="px-3 py-6 text-center text-muted-foreground text-sm">Keine offenen Positionen im Shadow Portfolio</td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {view === "closed" && (
+        <div className="border border-border rounded-lg overflow-hidden">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="bg-muted/50 border-b border-border">
+                <th className="text-left px-3 py-2 font-medium">Symbol</th>
+                <th className="text-left px-3 py-2 font-medium">Richtung</th>
+                <th className="text-right px-3 py-2 font-medium">Entry</th>
+                <th className="text-right px-3 py-2 font-medium">Exit</th>
+                <th className="text-right px-3 py-2 font-medium">P&L</th>
+                <th className="text-right px-3 py-2 font-medium">P&L %</th>
+                <th className="text-left px-3 py-2 font-medium">Haltezeit</th>
+                <th className="text-left px-3 py-2 font-medium">Grund</th>
+              </tr>
+            </thead>
+            <tbody>
+              {closedPositions.map((pos: any) => {
+                const pnl = Number(pos.pnl_amount ?? 0);
+                const pnlPct = Number(pos.pnl_percent ?? 0);
+                const reason = pos.position_status === "STOPPED_OUT" ? "SL" : pos.position_status === "TP_HIT" ? "TP" : "Close";
+                return (
+                  <tr key={pos.id} className="border-b border-border last:border-0 hover:bg-muted/20">
+                    <td className="px-3 py-2 font-mono text-xs font-medium">{pos.symbol}</td>
+                    <td className="px-3 py-2">
+                      <span className={`text-xs px-1.5 py-0.5 rounded ${pos.position_type === "LONG" ? "bg-bullish/15 text-bullish" : "bg-bearish/15 text-bearish"}`}>
+                        {pos.position_type}
+                      </span>
+                    </td>
+                    <td className="px-3 py-2 text-right font-mono text-xs">${Number(pos.entry_price).toFixed(2)}</td>
+                    <td className="px-3 py-2 text-right font-mono text-xs">${Number(pos.exit_price).toFixed(2)}</td>
+                    <td className={`px-3 py-2 text-right font-mono text-xs font-medium ${pnl >= 0 ? "text-bullish" : "text-bearish"}`}>
+                      ${pnl.toFixed(0)}
+                    </td>
+                    <td className={`px-3 py-2 text-right font-mono text-xs ${pnlPct >= 0 ? "text-bullish" : "text-bearish"}`}>
+                      {pnlPct.toFixed(1)}%
+                    </td>
+                    <td className="px-3 py-2 text-xs text-muted-foreground">{pos.holding_days ?? 0}d</td>
+                    <td className="px-3 py-2 text-xs text-muted-foreground">{reason}</td>
+                  </tr>
+                );
+              })}
+              {closedPositions.length === 0 && (
+                <tr><td colSpan={8} className="px-3 py-6 text-center text-muted-foreground text-sm">Noch keine geschlossenen Trades im Shadow Portfolio</td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// TAB 3: STRATEGY CONFIG
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 function StrategyConfigTab() {
