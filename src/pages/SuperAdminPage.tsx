@@ -547,14 +547,32 @@ function ShadowPortfolioTab() {
                 <th className="text-right px-3 py-2 font-medium">P&L</th>
                 <th className="text-right px-3 py-2 font-medium">P&L %</th>
                 <th className="text-left px-3 py-2 font-medium">Haltezeit</th>
-                <th className="text-left px-3 py-2 font-medium">Grund</th>
+                <th className="text-left px-3 py-2 font-medium">Exit-Grund</th>
+                <th className="text-left px-3 py-2 font-medium">Trigger</th>
               </tr>
             </thead>
             <tbody>
               {closedPositions.map((pos: any) => {
                 const pnl = Number(pos.pnl_amount ?? 0);
                 const pnlPct = Number(pos.pnl_percent ?? 0);
-                const reason = pos.position_status === "STOPPED_OUT" ? "SL" : pos.position_status === "TP_HIT" ? "TP" : "Close";
+                const reason = pos.position_status === "STOPPED_OUT" ? "Stop Loss"
+                  : pos.position_status === "TP_HIT" ? "Take Profit"
+                  : pos.trigger_source === "MAX_HOLDING" ? "Max Haltezeit"
+                  : pos.trigger_source === "TRAILING_STOP" ? "Trailing Stop"
+                  : "Manual Close";
+                const reasonColor = pos.position_status === "STOPPED_OUT" ? "text-bearish"
+                  : pos.position_status === "TP_HIT" ? "text-bullish"
+                  : "text-muted-foreground";
+                const trigger = pos.trigger_source ?? "-";
+                const triggerLabel: Record<string, string> = {
+                  AUTO_SIGNAL: "Auto-Signal",
+                  STOP_LOSS: "Stop Loss",
+                  TRAILING_STOP: "Trailing Stop",
+                  TAKE_PROFIT: "Take Profit",
+                  MAX_HOLDING: "Max Haltezeit",
+                  MANUAL: "Manuell",
+                  SIGNAL_REVERSAL: "Signal-Umkehr",
+                };
                 return (
                   <tr key={pos.id} className="border-b border-border last:border-0 hover:bg-muted/20">
                     <td className="px-3 py-2 font-mono text-xs font-medium">{pos.symbol}</td>
@@ -572,12 +590,17 @@ function ShadowPortfolioTab() {
                       {pnlPct.toFixed(1)}%
                     </td>
                     <td className="px-3 py-2 text-xs text-muted-foreground">{pos.holding_days ?? 0}d</td>
-                    <td className="px-3 py-2 text-xs text-muted-foreground">{reason}</td>
+                    <td className={`px-3 py-2 text-xs font-medium ${reasonColor}`}>{reason}</td>
+                    <td className="px-3 py-2">
+                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground">
+                        {triggerLabel[trigger] ?? trigger}
+                      </span>
+                    </td>
                   </tr>
                 );
               })}
               {closedPositions.length === 0 && (
-                <tr><td colSpan={8} className="px-3 py-6 text-center text-muted-foreground text-sm">Noch keine geschlossenen Trades im Shadow Portfolio</td></tr>
+                <tr><td colSpan={9} className="px-3 py-6 text-center text-muted-foreground text-sm">Noch keine geschlossenen Trades im Shadow Portfolio</td></tr>
               )}
             </tbody>
           </table>
