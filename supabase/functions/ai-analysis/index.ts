@@ -790,6 +790,13 @@ async function saveFusionDecision(supabase: any, symbol: string, analysisDate: s
     ice_signals_active: String(ctx.strand_analyses?.find((a: any) => a.strand_type === "croc_ice")?.key_findings?.ice_cluster ?? "NONE"),
   };
 
+  // V8.1: Prevent duplicates — delete existing decision for same symbol+date
+  await supabase.from("trading_decisions")
+    .delete()
+    .eq("symbol", symbol)
+    .gte("decision_timestamp", analysisDate + "T00:00:00")
+    .lt("decision_timestamp", analysisDate + "T23:59:59");
+
   const { error } = await supabase.from("trading_decisions").insert(decisionRow);
   if (error) {
     console.error("trading_decisions insert error:", error);
@@ -1026,6 +1033,13 @@ Regeln:
     croc_status: signals.length > 0 ? "ACTIVE" : "NEUTRAL",
     ice_signals_active: String(signals.length),
   };
+
+  // V8.1: Prevent duplicates — delete existing decision for same symbol+date
+  await supabase.from("trading_decisions")
+    .delete()
+    .eq("symbol", symbol)
+    .gte("decision_timestamp", analysisDate + "T00:00:00")
+    .lt("decision_timestamp", analysisDate + "T23:59:59");
 
   const { data: insertedDecision, error: insertError } = await supabase
     .from("trading_decisions").insert(decisionRow).select("decision_id").single();

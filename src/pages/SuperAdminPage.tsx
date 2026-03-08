@@ -16,6 +16,7 @@ import {
   TrendingUp,
   TrendingDown,
   ArrowUpDown,
+  ScrollText,
 } from "lucide-react";
 
 // ━━━ Tab Navigation ━━━
@@ -24,6 +25,7 @@ const tabs = [
   { id: "shadow", label: "Shadow Portfolio", icon: Eye },
   { id: "strategy", label: "Strategy Config", icon: Settings },
   { id: "pipeline", label: "Pipeline Monitor", icon: Activity },
+  { id: "logs", label: "System Logs", icon: ScrollText },
   { id: "health", label: "System Health", icon: Server },
 ] as const;
 
@@ -62,6 +64,7 @@ export default function SuperAdminPage() {
       {activeTab === "shadow" && <ShadowPortfolioTab />}
       {activeTab === "strategy" && <StrategyConfigTab />}
       {activeTab === "pipeline" && <PipelineMonitorTab />}
+      {activeTab === "logs" && <SystemLogsTab />}
       {activeTab === "health" && <SystemHealthTab />}
     </div>
   );
@@ -495,6 +498,9 @@ function ShadowPortfolioTab() {
                 <th className="text-right px-3 py-2 font-medium">Entry</th>
                 <th className="text-right px-3 py-2 font-medium">Aktuell</th>
                 <th className="text-right px-3 py-2 font-medium">P&L</th>
+                <th className="text-right px-3 py-2 font-medium">Stop-Loss</th>
+                <th className="text-right px-3 py-2 font-medium">Trailing</th>
+                <th className="text-right px-3 py-2 font-medium">Tage</th>
                 <th className="text-left px-3 py-2 font-medium">Offen seit</th>
               </tr>
             </thead>
@@ -507,6 +513,9 @@ function ShadowPortfolioTab() {
                   ? (current - entry) * qty
                   : (entry - current) * qty;
                 const pnlPct = ((pos.position_type === "LONG" ? current - entry : entry - current) / entry) * 100;
+                const days = pos.opened_at
+                  ? Math.max(0, Math.floor((Date.now() - new Date(pos.opened_at).getTime()) / 86400000))
+                  : null;
                 return (
                   <tr key={pos.id} className="border-b border-border last:border-0 hover:bg-muted/20">
                     <td className="px-3 py-2 font-mono text-xs font-medium">{pos.symbol}</td>
@@ -521,6 +530,17 @@ function ShadowPortfolioTab() {
                     <td className={`px-3 py-2 text-right font-mono text-xs font-medium ${pnl >= 0 ? "text-bullish" : "text-bearish"}`}>
                       ${pnl.toFixed(0)} ({pnlPct.toFixed(1)}%)
                     </td>
+                    <td className="px-3 py-2 text-right font-mono text-xs text-muted-foreground">
+                      {pos.stop_loss ? `$${Number(pos.stop_loss).toFixed(2)}` : "-"}
+                    </td>
+                    <td className="px-3 py-2 text-right font-mono text-xs">
+                      {pos.trailing_stop_activated
+                        ? <span className="text-primary">${Number(pos.trailing_stop_price).toFixed(2)}</span>
+                        : <span className="text-muted-foreground/50">{pos.trailing_stop_price ? `$${Number(pos.trailing_stop_price).toFixed(2)}` : "-"}</span>}
+                    </td>
+                    <td className="px-3 py-2 text-right font-mono text-xs text-muted-foreground">
+                      {days != null ? days : "-"}
+                    </td>
                     <td className="px-3 py-2 text-xs text-muted-foreground">
                       {pos.opened_at ? new Date(pos.opened_at).toLocaleDateString("de-DE") : "-"}
                     </td>
@@ -528,7 +548,7 @@ function ShadowPortfolioTab() {
                 );
               })}
               {openPositions.length === 0 && (
-                <tr><td colSpan={7} className="px-3 py-6 text-center text-muted-foreground text-sm">Keine offenen Positionen im Shadow Portfolio</td></tr>
+                <tr><td colSpan={10} className="px-3 py-6 text-center text-muted-foreground text-sm">Keine offenen Positionen im Shadow Portfolio</td></tr>
               )}
             </tbody>
           </table>
@@ -858,7 +878,172 @@ function PipelineMonitorTab() {
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-// TAB 4: SYSTEM HEALTH
+// TAB: SYSTEM LOGS
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+function SystemLogsTab() {
+  const [logDate, setLogDate] = useState(new Date().toISOString().slice(0, 10));
+  const [sourceFilter, setSourceFilter] = useState<string>("all");
+  const [levelFilter, setLevelFilter] = useState<string>("all");
+
+  const { data: logs = [], isLoading } = useQuery({
+    queryKey: ["system-logs", logDate, sourceFilter, levelFilter],
+    queryFn: async () => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      let query = (supabase as any)
+        .from("system_logs")
+        .select("*")
+        .eq("log_date", logDate)
+        .order("log_time", { ascending: false })
+        .limit(200);
+
+      if (sourceFilter !== "all") {
+        query = query.eq("source", sourceFilter);
+      }
+      if (levelFilter !== "all") {
+        query = query.eq("level", levelFilter);
+      }
+
+      const { data, error } = await query;
+      if (error) throw error;
+      return data;
+    },
+    refetchInterval: 10000,
+  });
+
+  const levelBadge = (level: string) => {
+    switch (level) {
+      case "success": return "bg-bullish/15 text-bullish";
+      case "info": return "bg-muted text-muted-foreground";
+      case "warn": return "bg-amber-500/15 text-amber-500";
+      case "error": return "bg-bearish/15 text-bearish";
+      default: return "bg-muted text-muted-foreground";
+    }
+  };
+
+  const sourceBadge = (source: string) => {
+    switch (source) {
+      case "trade_engine": return "bg-primary/15 text-primary";
+      case "pipeline": return "bg-blue-500/15 text-blue-500";
+      case "price_update": return "bg-amber-500/15 text-amber-500";
+      case "ai_analysis": return "bg-purple-500/15 text-purple-500";
+      default: return "bg-muted text-muted-foreground";
+    }
+  };
+
+  if (isLoading) {
+    return <div className="text-sm text-muted-foreground">Lade Logs...</div>;
+  }
+
+  return (
+    <div className="space-y-3">
+      {/* Filter Bar */}
+      <div className="flex flex-wrap items-center gap-3">
+        <div className="flex items-center gap-2">
+          <label className="text-xs text-muted-foreground">Datum:</label>
+          <input
+            type="date"
+            value={logDate}
+            onChange={(e) => setLogDate(e.target.value)}
+            className="bg-background border border-border rounded px-2 py-1 text-xs font-mono"
+          />
+        </div>
+        <div className="flex items-center gap-2">
+          <label className="text-xs text-muted-foreground">Source:</label>
+          <select
+            value={sourceFilter}
+            onChange={(e) => setSourceFilter(e.target.value)}
+            className="bg-background border border-border rounded px-2 py-1 text-xs"
+          >
+            <option value="all">Alle</option>
+            <option value="trade_engine">Trade Engine</option>
+            <option value="pipeline">Pipeline</option>
+            <option value="price_update">Price Update</option>
+            <option value="ai_analysis">AI Analysis</option>
+          </select>
+        </div>
+        <div className="flex items-center gap-2">
+          <label className="text-xs text-muted-foreground">Level:</label>
+          <select
+            value={levelFilter}
+            onChange={(e) => setLevelFilter(e.target.value)}
+            className="bg-background border border-border rounded px-2 py-1 text-xs"
+          >
+            <option value="all">Alle</option>
+            <option value="success">Success</option>
+            <option value="info">Info</option>
+            <option value="warn">Warn</option>
+            <option value="error">Error</option>
+          </select>
+        </div>
+        <span className="text-xs text-muted-foreground ml-auto">
+          {logs.length} Einträge
+        </span>
+      </div>
+
+      {/* Logs Table */}
+      {logs.length === 0 ? (
+        <div className="text-center py-8 text-muted-foreground">
+          <ScrollText className="h-8 w-8 mx-auto mb-2 opacity-50" />
+          <p className="text-sm">Keine Logs für {logDate} gefunden.</p>
+        </div>
+      ) : (
+        <div className="border border-border rounded-lg overflow-hidden max-h-[600px] overflow-y-auto">
+          <table className="w-full text-sm">
+            <thead className="sticky top-0 bg-background z-10">
+              <tr className="bg-muted/50 border-b border-border">
+                <th className="text-left px-3 py-2 font-medium w-[80px]">Zeit</th>
+                <th className="text-left px-3 py-2 font-medium w-[100px]">Source</th>
+                <th className="text-left px-3 py-2 font-medium w-[100px]">Action</th>
+                <th className="text-left px-3 py-2 font-medium w-[80px]">Symbol</th>
+                <th className="text-left px-3 py-2 font-medium">Nachricht</th>
+                <th className="text-left px-3 py-2 font-medium w-[70px]">Level</th>
+              </tr>
+            </thead>
+            <tbody>
+              {logs.map((log: any) => (
+                <tr key={log.id} className="border-b border-border last:border-0 hover:bg-muted/20">
+                  <td className="px-3 py-2 font-mono text-[10px] text-muted-foreground whitespace-nowrap">
+                    {new Date(log.log_time).toLocaleTimeString("de-DE", {
+                      hour: "2-digit", minute: "2-digit", second: "2-digit",
+                    })}
+                  </td>
+                  <td className="px-3 py-2">
+                    <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${sourceBadge(log.source)}`}>
+                      {log.source}
+                    </span>
+                  </td>
+                  <td className="px-3 py-2 font-mono text-[10px] text-muted-foreground">
+                    {log.action}
+                  </td>
+                  <td className="px-3 py-2 font-mono text-xs font-medium">
+                    {log.symbol ?? "-"}
+                  </td>
+                  <td className="px-3 py-2 text-xs text-foreground max-w-[300px]">
+                    <span className="block truncate" title={log.message}>{log.message}</span>
+                    {log.details && (
+                      <span className="block text-[10px] text-muted-foreground truncate" title={JSON.stringify(log.details)}>
+                        {JSON.stringify(log.details).slice(0, 80)}
+                      </span>
+                    )}
+                  </td>
+                  <td className="px-3 py-2">
+                    <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${levelBadge(log.level)}`}>
+                      {log.level}
+                    </span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// TAB: SYSTEM HEALTH
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 function SystemHealthTab() {

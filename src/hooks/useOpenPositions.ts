@@ -24,6 +24,10 @@ export interface DemoPosition {
   opened_at: string | null;
   closed_at: string | null;
   holding_days: number | null;
+  trailing_stop_price: number | null;
+  trailing_stop_percent: number | null;
+  trailing_stop_activated: boolean | null;
+  trailing_stop_type: string | null;
 }
 
 export function useOpenPositions(accountId: number = 1) {

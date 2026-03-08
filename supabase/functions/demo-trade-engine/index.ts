@@ -217,17 +217,48 @@ async function handleAutoTrade(supabase: any, body: any) {
   // Shadow Portfolio: takes ALL trades, no rules, fixed position size
   const isShadow = account.is_shadow === true;
 
-  // 3. Get today's trading decisions (only LONG/SHORT, not CASH)
-  const today = new Date().toISOString().slice(0, 10);
-  const { data: decisions } = await supabase
+  // 3. Get trading decisions (only LONG/SHORT, not CASH)
+  // V8.1: Support target_date for backfilling Shadow Portfolio
+  const targetDate = body.target_date ?? new Date().toISOString().slice(0, 10);
+  const { data: rawDecisions } = await supabase
     .from("trading_decisions")
     .select("*")
-    .gte("decision_timestamp", today + "T00:00:00")
+    .gte("decision_timestamp", targetDate + "T00:00:00")
+    .lt("decision_timestamp", targetDate + "T23:59:59")
     .in("action_type", ["LONG", "SHORT"])
     .order("confidence_score", { ascending: false });
 
-  if (!decisions?.length) {
-    return jsonResponse({ message: "No actionable decisions today", results: [] });
+  if (!rawDecisions?.length) {
+    return jsonResponse({ message: `No actionable decisions for ${targetDate}`, results: [] });
+  }
+
+  // V8.1: Quality-based ranking (not just confidence)
+  // S4 (CROC) hat bestes Unterscheidungsvermögen (Winners Ø56 vs Losers Ø35)
+  // S1 (Technical) ist zweitbester Differenzierer
+  // Fusion-Confidence bleibt als Gesamtbewertung relevant
+  const decisions = [...rawDecisions];
+  if (decisions.length > 1) {
+    decisions.sort((a: any, b: any) => {
+      const s4a = Number(a.strand4_confidence ?? 0);
+      const s1a = Number(a.strand1_confidence ?? 0);
+      const cfa = Number(a.confidence_score ?? 0);
+      // Malus: S4 widerspricht Trade-Richtung → -20
+      const s4ConflictA = (a.strand4_signal && a.strand4_signal !== a.action_type) ? -20 : 0;
+      const scoreA = (s4a * 0.35) + (s1a * 0.30) + (cfa * 0.35) + s4ConflictA;
+
+      const s4b = Number(b.strand4_confidence ?? 0);
+      const s1b = Number(b.strand1_confidence ?? 0);
+      const cfb = Number(b.confidence_score ?? 0);
+      const s4ConflictB = (b.strand4_signal && b.strand4_signal !== b.action_type) ? -20 : 0;
+      const scoreB = (s4b * 0.35) + (s1b * 0.30) + (cfb * 0.35) + s4ConflictB;
+
+      return scoreB - scoreA; // DESC — highest quality first
+    });
+    console.log(`V8.1 Quality Ranking: Top=${decisions[0]?.symbol} (score=${(
+      Number(decisions[0]?.strand4_confidence ?? 0) * 0.35 +
+      Number(decisions[0]?.strand1_confidence ?? 0) * 0.30 +
+      Number(decisions[0]?.confidence_score ?? 0) * 0.35
+    ).toFixed(1)}), Last=${decisions[decisions.length - 1]?.symbol}`);
   }
 
   // 4. Get existing open positions (to avoid duplicates)
@@ -313,7 +344,7 @@ async function handleAutoTrade(supabase: any, body: any) {
       .from("ai_strand_analyses")
       .select("key_findings")
       .eq("symbol", symbol)
-      .eq("analysis_date", today)
+      .eq("analysis_date", targetDate)
       .eq("strand_type", "fusion")
       .single();
 
@@ -414,6 +445,16 @@ async function handleAutoTrade(supabase: any, body: any) {
         trailing_stop_type: trailingStopType,
       });
       results.push({ symbol, ...result });
+
+      // V8.2: Log trade opening
+      await supabase.from("system_logs").insert({
+        source: "trade_engine", action: "auto_trade", level: "success",
+        symbol, account_id: accountId,
+        message: `${direction} Position eröffnet: ${symbol} @ $${entryPrice.toFixed(2)}`,
+        details: { entry_price: entryPrice, stop_loss: stopSoft, take_profit_1: tp1,
+                   confidence: decision.confidence_score, quality_score: decision.strand4_confidence,
+                   entry_type: entryType, quantity }
+      }).then(() => {}).catch(() => {}); // fire-and-forget
     } else {
       // NOTIFY_ONLY
       results.push({ symbol, status: "NOTIFIED", direction, confidence: decision.confidence_score });
@@ -514,6 +555,14 @@ async function handleCheckExits(supabase: any, body: any) {
       if ((isLong && currentPrice <= sl) || (!isLong && currentPrice >= sl)) {
         const result = await closePosition(supabase, pos, currentPrice, "STOP_LOSS");
         results.push({ symbol: pos.symbol, action: "STOPPED_OUT", ...result });
+        // V8.2: Log exit
+        const exitPnl = isLong ? (currentPrice - entryPrice) * Number(pos.quantity) : (entryPrice - currentPrice) * Number(pos.quantity);
+        await supabase.from("system_logs").insert({
+          source: "trade_engine", action: "check_exits", level: "warn",
+          symbol: pos.symbol, account_id: pos.account_id,
+          message: `STOP_LOSS: ${pos.symbol} ${pos.position_type} @ $${currentPrice.toFixed(2)}, P&L: $${exitPnl.toFixed(2)}`,
+          details: { exit_price: currentPrice, exit_reason: "STOP_LOSS", stop_loss: sl, pnl: exitPnl }
+        }).then(() => {}).catch(() => {});
         continue;
       }
     }
@@ -524,6 +573,14 @@ async function handleCheckExits(supabase: any, body: any) {
       if ((isLong && currentPrice <= trailingPrice) || (!isLong && currentPrice >= trailingPrice)) {
         const result = await closePosition(supabase, pos, currentPrice, "TRAILING_STOP");
         results.push({ symbol: pos.symbol, action: "TRAILING_STOPPED", ...result });
+        // V8.2: Log exit
+        const exitPnl = isLong ? (currentPrice - entryPrice) * Number(pos.quantity) : (entryPrice - currentPrice) * Number(pos.quantity);
+        await supabase.from("system_logs").insert({
+          source: "trade_engine", action: "check_exits", level: "warn",
+          symbol: pos.symbol, account_id: pos.account_id,
+          message: `TRAILING_STOP: ${pos.symbol} ${pos.position_type} @ $${currentPrice.toFixed(2)}, P&L: $${exitPnl.toFixed(2)}`,
+          details: { exit_price: currentPrice, exit_reason: "TRAILING_STOP", trailing_price: trailingPrice, pnl: exitPnl }
+        }).then(() => {}).catch(() => {});
         continue;
       }
     }
@@ -788,6 +845,33 @@ async function handleUpdateTrailing(supabase: any, body: any) {
           }
         }
       }
+    }
+
+    // V8.2: Log trailing stop changes to position_changes_log + system_logs
+    const oldTrailingPrice = Number(pos.trailing_stop_price ?? 0);
+    const posChanges: any[] = [];
+    if (trailingStopPrice && Math.abs(trailingStopPrice - oldTrailingPrice) > 0.001) {
+      posChanges.push({
+        position_id: pos.id, change_type: "trailing_stop_price",
+        old_value: oldTrailingPrice || null, new_value: trailingStopPrice,
+        change_reason: trailingType === "SENKOU_SPAN_B" ? "senkou_span_b" : "trailing_update"
+      });
+    }
+    if (activated && !pos.trailing_stop_activated) {
+      posChanges.push({
+        position_id: pos.id, change_type: "trailing_stop_activated",
+        old_value: 0, new_value: 1, change_reason: "price_threshold"
+      });
+    }
+    if (posChanges.length > 0) {
+      await supabase.from("position_changes_log").insert(posChanges).then(() => {}).catch(() => {});
+      await supabase.from("system_logs").insert({
+        source: "trade_engine", action: "trailing_stops", level: "info",
+        symbol: pos.symbol, account_id: pos.account_id,
+        message: `TrailingStop: $${oldTrailingPrice.toFixed(2)} → $${(trailingStopPrice ?? 0).toFixed(2)} (${pos.symbol})`,
+        details: { old_trailing: oldTrailingPrice, new_trailing: trailingStopPrice,
+                   highest: newHighest, lowest: newLowest, activated, type: trailingType }
+      }).then(() => {}).catch(() => {});
     }
 
     // Update position

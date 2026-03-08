@@ -202,6 +202,7 @@ function OpenPositionsTab() {
           <SortHeader label="P&L ($)" sortKey="pnl_amount" currentKey={sortKey} currentDir={sortDir} onSort={handleSort} className="text-right" />
           <SortHeader label="P&L (%)" sortKey="pnl_percent" currentKey={sortKey} currentDir={sortDir} onSort={handleSort} className="text-right" />
           <SortHeader label="Stop-Loss" sortKey="stop_loss" currentKey={sortKey} currentDir={sortDir} onSort={handleSort} className="text-right" />
+          <SortHeader label="Trailing" sortKey="trailing_stop_price" currentKey={sortKey} currentDir={sortDir} onSort={handleSort} className="text-right" />
           <SortHeader label="Tage" sortKey="holding_days" currentKey={sortKey} currentDir={sortDir} onSort={handleSort} className="text-right" />
           <TableHead className="text-right">Aktion</TableHead>
         </TableRow>
@@ -232,7 +233,16 @@ function OpenPositionsTab() {
               {fmtPct(p.pnl_percent)}
             </TableCell>
             <TableCell className="text-right font-mono text-muted-foreground">{fmt(p.stop_loss)}</TableCell>
-            <TableCell className="text-right font-mono text-muted-foreground">{p.holding_days ?? "\u2014"}</TableCell>
+            <TableCell className="text-right font-mono">
+              {p.trailing_stop_activated
+                ? <span className="text-primary">{fmt(p.trailing_stop_price)}</span>
+                : <span className="text-muted-foreground/50">{p.trailing_stop_price ? fmt(p.trailing_stop_price) : "\u2014"}</span>}
+            </TableCell>
+            <TableCell className="text-right font-mono text-muted-foreground">
+              {p.opened_at
+                ? Math.max(0, Math.floor((Date.now() - new Date(p.opened_at).getTime()) / 86400000))
+                : "\u2014"}
+            </TableCell>
             <TableCell className="text-right">
               <AlertDialog>
                 <AlertDialogTrigger asChild>
