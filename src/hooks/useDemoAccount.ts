@@ -15,6 +15,12 @@ export interface DemoAccount {
   max_drawdown_percent: number;
   peak_balance: number;
   is_active: boolean;
+  // V8.3 CFD fields
+  leverage_ratio: number;
+  margin_used: number;
+  account_currency: string;
+  margin_call_level: number;
+  forced_close_level: number;
 }
 
 export function useDemoAccount(accountId: number = 1) {

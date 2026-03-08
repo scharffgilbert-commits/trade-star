@@ -327,10 +327,15 @@ async function handleAutoTrade(supabase: any, body: any) {
         quantity = Math.floor(maxPositionSize / entryPrice);
       }
 
-      // Also cap to available balance
-      const availableBalance = account.current_balance - (account.reserved_balance ?? 0);
-      if (quantity * entryPrice > availableBalance) {
-        quantity = Math.floor(availableBalance / entryPrice);
+      // V8.3: Cap to available MARGIN (not full notional)
+      // For leverage=1: marginPerUnit = entryPrice (identical to before)
+      // For leverage=20: marginPerUnit = entryPrice / 20
+      const leverage = getAccountLeverage(account);
+      const marginUsed = Number(account.margin_used ?? 0);
+      const availableBalance = account.current_balance - marginUsed;
+      const marginPerUnit = entryPrice / leverage;
+      if (quantity * marginPerUnit > availableBalance) {
+        quantity = Math.floor(availableBalance / marginPerUnit);
       }
 
       if (quantity < 1) {
@@ -609,22 +614,33 @@ async function handleCheckExits(supabase: any, body: any) {
             : (entryPrice - currentPrice) * halfQty;
 
           // Update position: reduce quantity, set partial close flag, move SL to breakeven
-          await supabase.from("demo_positions").update({
-            quantity: Number(pos.quantity) - halfQty,
+          const remainQty = Number(pos.quantity) - halfQty;
+          const posUpdateObj: any = {
+            quantity: remainQty,
             partial_close_at_1r: true,
             partial_close_price: currentPrice,
             stop_loss: entryPrice,  // Move SL to breakeven!
             notes: (pos.notes ?? "") + ` | +1R partial: ${halfQty}@${currentPrice}`,
             updated_at: new Date().toISOString(),
-          }).eq("id", pos.id);
+          };
+          // V8.3: Update CFD fields for reduced position
+          if (pos.margin_required && Number(pos.margin_required) > 0) {
+            const origQty = Number(pos.quantity);
+            posUpdateObj.margin_required = Math.round(Number(pos.margin_required) * (remainQty / origQty) * 100) / 100;
+            posUpdateObj.notional_value = Math.round(remainQty * entryPrice * 100) / 100;
+          }
+          await supabase.from("demo_positions").update(posUpdateObj).eq("id", pos.id);
 
           // Log partial close transaction
           const { data: account } = await supabase.from("demo_accounts").select("*").eq("id", accountId).single();
           if (account) {
+            const pcLeverage = getAccountLeverage(account);
+            const halfMargin = calcMarginRequired(halfQty, entryPrice, pcLeverage);
             const newBalance = account.current_balance + partialPnl;
             await supabase.from("demo_accounts").update({
               current_balance: Math.round(newBalance * 100) / 100,
               reserved_balance: Math.max(0, (account.reserved_balance ?? 0) - halfQty * entryPrice),
+              margin_used: Math.max(0, Number(account.margin_used ?? 0) - halfMargin), // V8.3
               updated_at: new Date().toISOString(),
             }).eq("id", accountId);
 
@@ -680,6 +696,43 @@ async function handleCheckExits(supabase: any, body: any) {
       ? (currentPrice - entryPrice) * Number(pos.quantity)
       : (entryPrice - currentPrice) * Number(pos.quantity);
     const pnlPercent = ((isLong ? currentPrice - entryPrice : entryPrice - currentPrice) / entryPrice) * 100;
+
+    // V8.3: Overnight fees for CFD positions (once per day)
+    const today = new Date().toISOString().slice(0, 10);
+    if (pos.is_cfd && pos.last_overnight_fee_date !== today) {
+      const currentNotional = Number(pos.quantity) * currentPrice;
+      const overnightFee = calcOvernightFee(currentNotional, pos.position_type, pos.symbol, new Date());
+      const roundedFee = Math.round(overnightFee * 100) / 100;
+
+      if (roundedFee > 0) {
+        // Deduct from account balance
+        const { data: feeAccount } = await supabase
+          .from("demo_accounts").select("current_balance").eq("id", accountId).single();
+        if (feeAccount) {
+          const newBal = feeAccount.current_balance - roundedFee;
+          await supabase.from("demo_accounts").update({
+            current_balance: Math.round(newBal * 100) / 100,
+            updated_at: new Date().toISOString(),
+          }).eq("id", accountId);
+        }
+
+        // Accumulate on position + mark date
+        const currentOvernightTotal = Number(pos.overnight_fees_total ?? 0);
+        await supabase.from("demo_positions").update({
+          overnight_fees_total: Math.round((currentOvernightTotal + roundedFee) * 100) / 100,
+          last_overnight_fee_date: today,
+          updated_at: new Date().toISOString(),
+        }).eq("id", pos.id);
+
+        // Log overnight fee
+        await supabase.from("system_logs").insert({
+          source: "trade_engine", action: "overnight_fee", level: "info",
+          symbol: pos.symbol, account_id: accountId,
+          message: `Overnight: ${pos.symbol} ${pos.position_type} notional=${currentNotional.toFixed(0)} fee=${roundedFee.toFixed(2)}`,
+          details: { notional: currentNotional, fee: roundedFee, direction: pos.position_type, day: today }
+        }).then(() => {}).catch(() => {});
+      }
+    }
 
     results.push({
       symbol: pos.symbol,
@@ -973,19 +1026,27 @@ async function handleReset(supabase: any, body: any) {
     }
   }
 
+  // V8.3: Get initial_balance for this specific account (not hardcoded!)
+  const { data: accountInfo } = await supabase
+    .from("demo_accounts").select("initial_balance, account_currency").eq("id", accountId).single();
+  const resetBalance = Number(accountInfo?.initial_balance ?? 100000);
+  const currency = accountInfo?.account_currency ?? 'USD';
+  const currSymbol = currency === 'EUR' ? '€' : '$';
+
   // Reset account
   await supabase
     .from("demo_accounts")
     .update({
-      current_balance: 100000,
+      current_balance: resetBalance,
       reserved_balance: 0,
+      margin_used: 0,
       total_pnl: 0,
       total_pnl_percent: 0,
       total_trades: 0,
       winning_trades: 0,
       losing_trades: 0,
       max_drawdown_percent: 0,
-      peak_balance: 100000,
+      peak_balance: resetBalance,
       updated_at: new Date().toISOString(),
     })
     .eq("id", accountId);
@@ -997,17 +1058,51 @@ async function handleReset(supabase: any, body: any) {
     symbol: null,
     quantity: 0,
     price: 0,
-    amount: 100000,
-    balance_after: 100000,
-    notes: "Demo account reset to $100,000",
+    amount: resetBalance,
+    balance_after: resetBalance,
+    notes: `Account reset to ${currSymbol}${resetBalance.toLocaleString()}`,
   });
 
-  return jsonResponse({ message: "Demo account reset to $100,000", account_id: accountId });
+  return jsonResponse({ message: `Account reset to ${currSymbol}${resetBalance.toLocaleString()}`, account_id: accountId });
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // HELPER FUNCTIONS
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+// ━━━ V8.3: CFD / Leverage Helpers ━━━
+function getAccountLeverage(account: any): number {
+  const leverage = Number(account.leverage_ratio ?? 1);
+  if (leverage <= 0 || !isFinite(leverage)) return 1;
+  return leverage;
+}
+
+function isCFDAccount(account: any): boolean {
+  return getAccountLeverage(account) > 1;
+}
+
+function calcMarginRequired(quantity: number, entryPrice: number, leverage: number): number {
+  return (quantity * entryPrice) / leverage;
+}
+
+function calcOvernightFee(
+  currentNotional: number, direction: string, symbol: string, date: Date
+): number {
+  // Reference rates: SOFR ~4.5% (US), ESTR ~2.9% (EUR/.DE)
+  const refRate = symbol.endsWith('.DE') ? 0.029 : 0.045;
+  const brokerSpread = 0.025; // 2.5% IG Markets typical spread
+  let dailyRate: number;
+  if (direction === 'LONG') {
+    dailyRate = (refRate + brokerSpread) / 365;
+  } else {
+    // SHORT: credit if refRate > spread, else 0
+    dailyRate = Math.max(0, refRate - brokerSpread) / 365;
+  }
+  // Wednesday = 3x (T+2 settlement, covers weekend)
+  const dayOfWeek = date.getUTCDay(); // 0=Sun, 3=Wed
+  const multiplier = dayOfWeek === 3 ? 3 : 1;
+  return currentNotional * dailyRate * multiplier;
+}
 
 async function openPosition(supabase: any, accountId: number, account: any, params: any) {
   const {
@@ -1022,11 +1117,16 @@ async function openPosition(supabase: any, accountId: number, account: any, para
     throw new Error("symbol, direction, quantity, entry_price required");
   }
 
-  const cost = quantity * entry_price;
-  const availableBalance = account.current_balance - (account.reserved_balance ?? 0);
+  // V8.3: Leverage-aware margin check
+  const leverage = getAccountLeverage(account);
+  const notionalValue = quantity * entry_price;
+  const marginRequired = calcMarginRequired(quantity, entry_price, leverage);
+  const isCfd = isCFDAccount(account);
+  const currentMarginUsed = Number(account.margin_used ?? 0);
+  const availableMargin = account.current_balance - currentMarginUsed;
 
-  if (cost > availableBalance) {
-    return { status: "ERROR", reason: "Insufficient balance", required: cost, available: availableBalance };
+  if (marginRequired > availableMargin) {
+    return { status: "ERROR", reason: "Insufficient margin", required_margin: Math.round(marginRequired * 100) / 100, available: Math.round(availableMargin * 100) / 100, notional: Math.round(notionalValue * 100) / 100 };
   }
 
   const isLong = direction === "LONG";
@@ -1062,6 +1162,10 @@ async function openPosition(supabase: any, accountId: number, account: any, para
       setup_name: setup_name || null,
       trade_style: trade_style || "CTT",
       trailing_stop_type: trailing_stop_type || "PERCENT",
+      // V8.3: CFD fields
+      margin_required: Math.round(marginRequired * 100) / 100,
+      notional_value: Math.round(notionalValue * 100) / 100,
+      is_cfd: isCfd,
     })
     .select("id")
     .single();
@@ -1070,11 +1174,12 @@ async function openPosition(supabase: any, accountId: number, account: any, para
     return { status: "ERROR", reason: posError.message };
   }
 
-  // Reserve balance
+  // V8.3: Reserve balance + margin tracking
   await supabase
     .from("demo_accounts")
     .update({
-      reserved_balance: (account.reserved_balance ?? 0) + cost,
+      reserved_balance: (account.reserved_balance ?? 0) + notionalValue,
+      margin_used: currentMarginUsed + marginRequired,
       updated_at: new Date().toISOString(),
     })
     .eq("id", accountId);
@@ -1088,9 +1193,9 @@ async function openPosition(supabase: any, accountId: number, account: any, para
     symbol,
     quantity,
     price: entry_price,
-    amount: -cost,
+    amount: -notionalValue,
     balance_after: account.current_balance,
-    notes: `${txType} ${quantity}x ${symbol} @ $${entry_price}`,
+    notes: `${txType} ${quantity}x ${symbol} @ $${entry_price}${isCfd ? ` (margin: ${marginRequired.toFixed(2)})` : ''}`,
   });
 
   return {
@@ -1100,7 +1205,8 @@ async function openPosition(supabase: any, accountId: number, account: any, para
     direction,
     quantity,
     entry_price,
-    cost,
+    cost: notionalValue,
+    margin_required: Math.round(marginRequired * 100) / 100,
   };
 }
 
@@ -1109,11 +1215,17 @@ async function closePosition(supabase: any, position: any, exitPrice: number, cl
   const quantity = Number(position.quantity);
   const entryPrice = Number(position.entry_price);
 
-  // Calculate P&L
+  // Calculate P&L (always on full notional value)
   const pnlAmount = isLong
     ? (exitPrice - entryPrice) * quantity
     : (entryPrice - exitPrice) * quantity;
-  const pnlPercent = ((isLong ? exitPrice - entryPrice : entryPrice - exitPrice) / entryPrice) * 100;
+
+  // V8.3: P&L% on margin for CFD (reflects actual return on capital deployed)
+  // For leverage=1: margin_required = notional, so result is identical to before
+  const marginReq = Number(position.margin_required ?? 0);
+  const pnlPercent = (marginReq > 0)
+    ? (pnlAmount / marginReq) * 100
+    : ((isLong ? exitPrice - entryPrice : entryPrice - exitPrice) / entryPrice) * 100;
 
   // Determine status
   let status = "CLOSED";
@@ -1150,13 +1262,16 @@ async function closePosition(supabase: any, position: any, exitPrice: number, cl
 
   if (account) {
     const tradeCost = quantity * entryPrice;
+    const tradeMargin = Number(position.margin_required ?? tradeCost); // V8.3: use margin, fallback to cost
     const newBalance = account.current_balance + pnlAmount;
     const newReserved = Math.max(0, (account.reserved_balance ?? 0) - tradeCost);
+    const newMarginUsed = Math.max(0, Number(account.margin_used ?? 0) - tradeMargin); // V8.3
     const totalPnl = (account.total_pnl ?? 0) + pnlAmount;
+    const initialBalance = Number(account.initial_balance ?? 100000); // V8.3: dynamic, not hardcoded
     const totalTrades = (account.total_trades ?? 0) + 1;
     const winningTrades = (account.winning_trades ?? 0) + (pnlAmount > 0 ? 1 : 0);
     const losingTrades = (account.losing_trades ?? 0) + (pnlAmount <= 0 ? 1 : 0);
-    const peakBalance = Math.max(account.peak_balance ?? 100000, newBalance);
+    const peakBalance = Math.max(account.peak_balance ?? initialBalance, newBalance);
     const drawdown = peakBalance > 0
       ? Math.round(((peakBalance - Math.min(newBalance, peakBalance)) / peakBalance) * 10000) / 100
       : 0;
@@ -1167,8 +1282,9 @@ async function closePosition(supabase: any, position: any, exitPrice: number, cl
       .update({
         current_balance: Math.round(newBalance * 100) / 100,
         reserved_balance: Math.round(newReserved * 100) / 100,
+        margin_used: Math.round(newMarginUsed * 100) / 100, // V8.3
         total_pnl: Math.round(totalPnl * 100) / 100,
-        total_pnl_percent: Math.round((totalPnl / 100000) * 10000) / 100,
+        total_pnl_percent: Math.round((totalPnl / initialBalance) * 10000) / 100, // V8.3: dynamic initial_balance
         total_trades: totalTrades,
         winning_trades: winningTrades,
         losing_trades: losingTrades,
@@ -1476,6 +1592,12 @@ async function handleCheckPending(supabase: any, body: any) {
     }
 
     if (triggered && account) {
+      // V8.3: Calculate margin for triggered position
+      const pendLeverage = getAccountLeverage(account);
+      const pendCost = Number(pos.quantity) * triggerPrice;
+      const pendMargin = calcMarginRequired(Number(pos.quantity), triggerPrice, pendLeverage);
+      const pendIsCfd = isCFDAccount(account);
+
       // Activate the position: change status to OPEN, set entry at trigger price
       await supabase.from("demo_positions").update({
         position_status: "OPEN",
@@ -1484,14 +1606,18 @@ async function handleCheckPending(supabase: any, body: any) {
         opened_at: new Date().toISOString(),
         trailing_stop_highest: isLong ? triggerPrice : pos.trailing_stop_highest,
         trailing_stop_lowest: !isLong ? triggerPrice : pos.trailing_stop_lowest,
+        // V8.3: CFD fields
+        margin_required: Math.round(pendMargin * 100) / 100,
+        notional_value: Math.round(pendCost * 100) / 100,
+        is_cfd: pendIsCfd,
         notes: (pos.notes ?? "") + ` | Triggered: ${entryType} at ${triggerPrice}`,
         updated_at: new Date().toISOString(),
       }).eq("id", pos.id);
 
-      // Reserve balance
-      const cost = Number(pos.quantity) * triggerPrice;
+      // Reserve balance + margin
       await supabase.from("demo_accounts").update({
-        reserved_balance: (account.reserved_balance ?? 0) + cost,
+        reserved_balance: (account.reserved_balance ?? 0) + pendCost,
+        margin_used: Number(account.margin_used ?? 0) + pendMargin, // V8.3
         updated_at: new Date().toISOString(),
       }).eq("id", accountId);
 
@@ -1503,9 +1629,9 @@ async function handleCheckPending(supabase: any, body: any) {
         symbol: pos.symbol,
         quantity: Number(pos.quantity),
         price: triggerPrice,
-        amount: -cost,
+        amount: -pendCost,
         balance_after: account.current_balance,
-        notes: `${entryType} triggered: ${Number(pos.quantity)}x ${pos.symbol} @ $${triggerPrice}`,
+        notes: `${entryType} triggered: ${Number(pos.quantity)}x ${pos.symbol} @ $${triggerPrice}${pendIsCfd ? ` (margin: ${pendMargin.toFixed(2)})` : ''}`,
       });
 
       results.push({ symbol: pos.symbol, action: "TRIGGERED", entry_type: entryType, price: triggerPrice });

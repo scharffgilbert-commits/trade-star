@@ -28,6 +28,11 @@ export interface DemoPosition {
   trailing_stop_percent: number | null;
   trailing_stop_activated: boolean | null;
   trailing_stop_type: string | null;
+  // V8.3 CFD fields
+  margin_required: number | null;
+  notional_value: number | null;
+  overnight_fees_total: number | null;
+  is_cfd: boolean | null;
 }
 
 export function useOpenPositions(accountId: number = 1) {

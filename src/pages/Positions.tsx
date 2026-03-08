@@ -71,8 +71,8 @@ const fmt = (v: number | null | undefined, prefix = "$") =>
 const fmtPct = (v: number | null | undefined) =>
   v != null ? `${Number(v) >= 0 ? "+" : ""}${Number(v).toFixed(2)}%` : "\u2014";
 
-const fmtPnl = (v: number | null | undefined) =>
-  v != null ? `${Number(v) >= 0 ? "+" : ""}$${Number(v).toFixed(2)}` : "\u2014";
+const fmtPnl = (v: number | null | undefined, prefix = "$") =>
+  v != null ? `${Number(v) >= 0 ? "+" : ""}${prefix}${Number(v).toFixed(2)}` : "\u2014";
 
 const pnlColor = (v: number | null | undefined) =>
   v == null ? "text-muted-foreground" : Number(v) >= 0 ? "text-bullish" : "text-bearish";
@@ -150,7 +150,9 @@ function SortHeader({
 // Open Positions Tab
 // ────────────────────────────────────────────
 function OpenPositionsTab() {
-  const { accountId, isReadOnly } = useAccountContext();
+  const { accountId, isReadOnly, accountInfo } = useAccountContext();
+  const isCFD = accountInfo.isCFD === true;
+  const cur = accountInfo.currency === "EUR" ? "\u20ac" : "$";
   const { positions, isLoading } = useOpenPositions(accountId);
   const { closeTrade, isLoading: isClosing } = useCloseTrade();
   const [sortKey, setSortKey] = useState<string>("opened_at");
@@ -199,8 +201,17 @@ function OpenPositionsTab() {
           <SortHeader label="Menge" sortKey="quantity" currentKey={sortKey} currentDir={sortDir} onSort={handleSort} className="text-right" />
           <SortHeader label="Einstieg" sortKey="entry_price" currentKey={sortKey} currentDir={sortDir} onSort={handleSort} className="text-right" />
           <SortHeader label="Aktuell" sortKey="current_price" currentKey={sortKey} currentDir={sortDir} onSort={handleSort} className="text-right" />
-          <SortHeader label="P&L ($)" sortKey="pnl_amount" currentKey={sortKey} currentDir={sortDir} onSort={handleSort} className="text-right" />
-          <SortHeader label="P&L (%)" sortKey="pnl_percent" currentKey={sortKey} currentDir={sortDir} onSort={handleSort} className="text-right" />
+          {isCFD && (
+            <>
+              <SortHeader label={`Margin (${cur})`} sortKey="margin_required" currentKey={sortKey} currentDir={sortDir} onSort={handleSort} className="text-right" />
+              <SortHeader label={`Notional (${cur})`} sortKey="notional_value" currentKey={sortKey} currentDir={sortDir} onSort={handleSort} className="text-right" />
+            </>
+          )}
+          <SortHeader label={`P&L (${cur})`} sortKey="pnl_amount" currentKey={sortKey} currentDir={sortDir} onSort={handleSort} className="text-right" />
+          <SortHeader label={isCFD ? "P&L% (Margin)" : "P&L (%)"} sortKey="pnl_percent" currentKey={sortKey} currentDir={sortDir} onSort={handleSort} className="text-right" />
+          {isCFD && (
+            <SortHeader label="Overnight" sortKey="overnight_fees_total" currentKey={sortKey} currentDir={sortDir} onSort={handleSort} className="text-right" />
+          )}
           <SortHeader label="Stop-Loss" sortKey="stop_loss" currentKey={sortKey} currentDir={sortDir} onSort={handleSort} className="text-right" />
           <SortHeader label="Trailing" sortKey="trailing_stop_price" currentKey={sortKey} currentDir={sortDir} onSort={handleSort} className="text-right" />
           <SortHeader label="Tage" sortKey="holding_days" currentKey={sortKey} currentDir={sortDir} onSort={handleSort} className="text-right" />
@@ -224,19 +235,32 @@ function OpenPositionsTab() {
               </Badge>
             </TableCell>
             <TableCell className="text-right font-mono">{p.quantity}</TableCell>
-            <TableCell className="text-right font-mono text-muted-foreground">{fmt(p.entry_price)}</TableCell>
-            <TableCell className="text-right font-mono text-foreground">{fmt(p.current_price)}</TableCell>
+            <TableCell className="text-right font-mono text-muted-foreground">{fmt(p.entry_price, cur)}</TableCell>
+            <TableCell className="text-right font-mono text-foreground">{fmt(p.current_price, cur)}</TableCell>
+            {isCFD && (
+              <>
+                <TableCell className="text-right font-mono text-muted-foreground">{fmt(p.margin_required, cur)}</TableCell>
+                <TableCell className="text-right font-mono text-muted-foreground">{fmt(p.notional_value, cur)}</TableCell>
+              </>
+            )}
             <TableCell className={`text-right font-mono font-semibold ${pnlColor(p.pnl_amount)}`}>
-              {fmtPnl(p.pnl_amount)}
+              {fmtPnl(p.pnl_amount, cur)}
             </TableCell>
             <TableCell className={`text-right font-mono ${pnlColor(p.pnl_percent)}`}>
               {fmtPct(p.pnl_percent)}
             </TableCell>
-            <TableCell className="text-right font-mono text-muted-foreground">{fmt(p.stop_loss)}</TableCell>
+            {isCFD && (
+              <TableCell className="text-right font-mono text-bearish">
+                {p.overnight_fees_total != null && p.overnight_fees_total > 0
+                  ? `-${cur}${Number(p.overnight_fees_total).toFixed(2)}`
+                  : "\u2014"}
+              </TableCell>
+            )}
+            <TableCell className="text-right font-mono text-muted-foreground">{fmt(p.stop_loss, cur)}</TableCell>
             <TableCell className="text-right font-mono">
               {p.trailing_stop_activated
-                ? <span className="text-primary">{fmt(p.trailing_stop_price)}</span>
-                : <span className="text-muted-foreground/50">{p.trailing_stop_price ? fmt(p.trailing_stop_price) : "\u2014"}</span>}
+                ? <span className="text-primary">{fmt(p.trailing_stop_price, cur)}</span>
+                : <span className="text-muted-foreground/50">{p.trailing_stop_price ? fmt(p.trailing_stop_price, cur) : "\u2014"}</span>}
             </TableCell>
             <TableCell className="text-right font-mono text-muted-foreground">
               {p.opened_at
@@ -256,10 +280,10 @@ function OpenPositionsTab() {
                     <AlertDialogTitle>Position schlie\u00dfen?</AlertDialogTitle>
                     <AlertDialogDescription>
                       M\u00f6chtest du die {p.position_type} Position in {p.symbol} ({p.quantity} St\u00fcck)
-                      zum aktuellen Preis von {fmt(p.current_price)} schlie\u00dfen?
+                      zum aktuellen Preis von {fmt(p.current_price, cur)} schlie\u00dfen?
                       {p.pnl_amount != null && (
                         <span className={`block mt-1 font-semibold ${pnlColor(p.pnl_amount)}`}>
-                          Aktuelles P&L: {fmtPnl(p.pnl_amount)} ({fmtPct(p.pnl_percent)})
+                          Aktuelles P&L: {fmtPnl(p.pnl_amount, cur)} ({fmtPct(p.pnl_percent)})
                         </span>
                       )}
                     </AlertDialogDescription>
@@ -763,8 +787,17 @@ function AutoTradeConfigSection() {
 // Summary Bar
 // ────────────────────────────────────────────
 function SummaryBar({ positions }: { positions: DemoPosition[] }) {
+  const { accountInfo } = useAccountContext();
+  const cur = accountInfo.currency === "EUR" ? "\u20ac" : "$";
+  const isCFD = accountInfo.isCFD === true;
   const openOnly = positions.filter((p) => p.position_status === "OPEN");
   const totalPnl = openOnly.reduce((acc, p) => acc + (p.pnl_amount ?? 0), 0);
+  const totalMargin = isCFD
+    ? openOnly.reduce((acc, p) => acc + (p.margin_required ?? 0), 0)
+    : 0;
+  const totalOvernight = isCFD
+    ? openOnly.reduce((acc, p) => acc + (p.overnight_fees_total ?? 0), 0)
+    : 0;
   const best = openOnly.length > 0
     ? openOnly.reduce((a, b) => ((a.pnl_amount ?? 0) > (b.pnl_amount ?? 0) ? a : b))
     : null;
@@ -779,13 +812,23 @@ function SummaryBar({ positions }: { positions: DemoPosition[] }) {
       </span>
       <span className="text-muted-foreground">
         Gesamt-P&L:{" "}
-        <span className={`font-mono font-semibold ${pnlColor(totalPnl)}`}>{fmtPnl(totalPnl)}</span>
+        <span className={`font-mono font-semibold ${pnlColor(totalPnl)}`}>{fmtPnl(totalPnl, cur)}</span>
       </span>
+      {isCFD && totalMargin > 0 && (
+        <span className="text-muted-foreground">
+          Margin: <span className="font-mono font-semibold text-foreground">{cur}{totalMargin.toFixed(0)}</span>
+        </span>
+      )}
+      {isCFD && totalOvernight > 0 && (
+        <span className="text-muted-foreground">
+          Overnight: <span className="font-mono font-semibold text-bearish">-{cur}{totalOvernight.toFixed(2)}</span>
+        </span>
+      )}
       {best && (
         <span className="text-muted-foreground">
           Bester:{" "}
           <span className="font-mono font-semibold text-bullish">
-            {best.symbol} {fmtPnl(best.pnl_amount)}
+            {best.symbol} {fmtPnl(best.pnl_amount, cur)}
           </span>
         </span>
       )}
@@ -793,7 +836,7 @@ function SummaryBar({ positions }: { positions: DemoPosition[] }) {
         <span className="text-muted-foreground">
           Schlechtester:{" "}
           <span className="font-mono font-semibold text-bearish">
-            {worst.symbol} {fmtPnl(worst.pnl_amount)}
+            {worst.symbol} {fmtPnl(worst.pnl_amount, cur)}
           </span>
         </span>
       )}
