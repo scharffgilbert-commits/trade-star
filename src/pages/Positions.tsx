@@ -74,6 +74,9 @@ const fmtPct = (v: number | null | undefined) =>
 const fmtPnl = (v: number | null | undefined, prefix = "$") =>
   v != null ? `${Number(v) >= 0 ? "+" : ""}${prefix}${Number(v).toFixed(2)}` : "\u2014";
 
+/** Per-symbol currency: .DE = EUR, else USD */
+const symbolCur = (symbol: string) => symbol.endsWith(".DE") ? "€" : "$";
+
 const pnlColor = (v: number | null | undefined) =>
   v == null ? "text-muted-foreground" : Number(v) >= 0 ? "text-bullish" : "text-bearish";
 
@@ -152,7 +155,6 @@ function SortHeader({
 function OpenPositionsTab() {
   const { accountId, isReadOnly, accountInfo } = useAccountContext();
   const isCFD = accountInfo.isCFD === true;
-  const cur = accountInfo.currency === "EUR" ? "\u20ac" : "$";
   const { positions, isLoading } = useOpenPositions(accountId);
   const { closeTrade, isLoading: isClosing } = useCloseTrade();
   const [sortKey, setSortKey] = useState<string>("opened_at");
@@ -203,11 +205,11 @@ function OpenPositionsTab() {
           <SortHeader label="Aktuell" sortKey="current_price" currentKey={sortKey} currentDir={sortDir} onSort={handleSort} className="text-right" />
           {isCFD && (
             <>
-              <SortHeader label={`Margin (${cur})`} sortKey="margin_required" currentKey={sortKey} currentDir={sortDir} onSort={handleSort} className="text-right" />
-              <SortHeader label={`Notional (${cur})`} sortKey="notional_value" currentKey={sortKey} currentDir={sortDir} onSort={handleSort} className="text-right" />
+              <SortHeader label="Margin" sortKey="margin_required" currentKey={sortKey} currentDir={sortDir} onSort={handleSort} className="text-right" />
+              <SortHeader label="Notional" sortKey="notional_value" currentKey={sortKey} currentDir={sortDir} onSort={handleSort} className="text-right" />
             </>
           )}
-          <SortHeader label={`P&L (${cur})`} sortKey="pnl_amount" currentKey={sortKey} currentDir={sortDir} onSort={handleSort} className="text-right" />
+          <SortHeader label="P&L" sortKey="pnl_amount" currentKey={sortKey} currentDir={sortDir} onSort={handleSort} className="text-right" />
           <SortHeader label={isCFD ? "P&L% (Margin)" : "P&L (%)"} sortKey="pnl_percent" currentKey={sortKey} currentDir={sortDir} onSort={handleSort} className="text-right" />
           {isCFD && (
             <SortHeader label="Overnight" sortKey="overnight_fees_total" currentKey={sortKey} currentDir={sortDir} onSort={handleSort} className="text-right" />
@@ -219,7 +221,9 @@ function OpenPositionsTab() {
         </TableRow>
       </TableHeader>
       <TableBody>
-        {sorted.map((p) => (
+        {sorted.map((p) => {
+          const sc = symbolCur(p.symbol);
+          return (
           <TableRow key={p.id} className={rowBg(p.pnl_amount)}>
             <TableCell className="font-mono font-bold text-foreground">{p.symbol}</TableCell>
             <TableCell>
@@ -235,16 +239,16 @@ function OpenPositionsTab() {
               </Badge>
             </TableCell>
             <TableCell className="text-right font-mono">{p.quantity}</TableCell>
-            <TableCell className="text-right font-mono text-muted-foreground">{fmt(p.entry_price, cur)}</TableCell>
-            <TableCell className="text-right font-mono text-foreground">{fmt(p.current_price, cur)}</TableCell>
+            <TableCell className="text-right font-mono text-muted-foreground">{fmt(p.entry_price, sc)}</TableCell>
+            <TableCell className="text-right font-mono text-foreground">{fmt(p.current_price, sc)}</TableCell>
             {isCFD && (
               <>
-                <TableCell className="text-right font-mono text-muted-foreground">{fmt(p.margin_required, cur)}</TableCell>
-                <TableCell className="text-right font-mono text-muted-foreground">{fmt(p.notional_value, cur)}</TableCell>
+                <TableCell className="text-right font-mono text-muted-foreground">{fmt(p.margin_required, sc)}</TableCell>
+                <TableCell className="text-right font-mono text-muted-foreground">{fmt(p.notional_value, sc)}</TableCell>
               </>
             )}
             <TableCell className={`text-right font-mono font-semibold ${pnlColor(p.pnl_amount)}`}>
-              {fmtPnl(p.pnl_amount, cur)}
+              {fmtPnl(p.pnl_amount, sc)}
             </TableCell>
             <TableCell className={`text-right font-mono ${pnlColor(p.pnl_percent)}`}>
               {fmtPct(p.pnl_percent)}
@@ -252,15 +256,15 @@ function OpenPositionsTab() {
             {isCFD && (
               <TableCell className="text-right font-mono text-bearish">
                 {p.overnight_fees_total != null && p.overnight_fees_total > 0
-                  ? `-${cur}${Number(p.overnight_fees_total).toFixed(2)}`
+                  ? `-${sc}${Number(p.overnight_fees_total).toFixed(2)}`
                   : "\u2014"}
               </TableCell>
             )}
-            <TableCell className="text-right font-mono text-muted-foreground">{fmt(p.stop_loss, cur)}</TableCell>
+            <TableCell className="text-right font-mono text-muted-foreground">{fmt(p.stop_loss, sc)}</TableCell>
             <TableCell className="text-right font-mono">
               {p.trailing_stop_activated
-                ? <span className="text-primary">{fmt(p.trailing_stop_price, cur)}</span>
-                : <span className="text-muted-foreground/50">{p.trailing_stop_price ? fmt(p.trailing_stop_price, cur) : "\u2014"}</span>}
+                ? <span className="text-primary">{fmt(p.trailing_stop_price, sc)}</span>
+                : <span className="text-muted-foreground/50">{p.trailing_stop_price ? fmt(p.trailing_stop_price, sc) : "\u2014"}</span>}
             </TableCell>
             <TableCell className="text-right font-mono text-muted-foreground">
               {p.opened_at
@@ -280,10 +284,10 @@ function OpenPositionsTab() {
                     <AlertDialogTitle>Position schlie\u00dfen?</AlertDialogTitle>
                     <AlertDialogDescription>
                       M\u00f6chtest du die {p.position_type} Position in {p.symbol} ({p.quantity} St\u00fcck)
-                      zum aktuellen Preis von {fmt(p.current_price, cur)} schlie\u00dfen?
+                      zum aktuellen Preis von {fmt(p.current_price, sc)} schlie\u00dfen?
                       {p.pnl_amount != null && (
                         <span className={`block mt-1 font-semibold ${pnlColor(p.pnl_amount)}`}>
-                          Aktuelles P&L: {fmtPnl(p.pnl_amount, cur)} ({fmtPct(p.pnl_percent)})
+                          Aktuelles P&L: {fmtPnl(p.pnl_amount, sc)} ({fmtPct(p.pnl_percent)})
                         </span>
                       )}
                     </AlertDialogDescription>
@@ -307,7 +311,8 @@ function OpenPositionsTab() {
               </AlertDialog>
             </TableCell>
           </TableRow>
-        ))}
+          );
+        })}
       </TableBody>
     </Table>
   );
@@ -328,7 +333,7 @@ function ClosedPositionsTab() {
       "Richtung",
       "Einstieg",
       "Ausstieg",
-      "P&L ($)",
+      "P&L",
       "P&L (%)",
       "Dauer (Tage)",
       "Trigger",
@@ -387,7 +392,7 @@ function ClosedPositionsTab() {
                 <TableHead>Richtung</TableHead>
                 <TableHead className="text-right">Einstieg</TableHead>
                 <TableHead className="text-right">Ausstieg</TableHead>
-                <TableHead className="text-right">P&L ($)</TableHead>
+                <TableHead className="text-right">P&L</TableHead>
                 <TableHead className="text-right">P&L (%)</TableHead>
                 <TableHead className="text-right">Dauer</TableHead>
                 <TableHead>Exit-Grund</TableHead>
@@ -397,6 +402,7 @@ function ClosedPositionsTab() {
             </TableHeader>
             <TableBody>
               {positions.map((p) => {
+                const sc = symbolCur(p.symbol);
                 const exitReasonLabel: Record<string, string> = {
                   STOPPED_OUT: "Stop Loss",
                   TP_HIT: "Take Profit",
@@ -434,10 +440,10 @@ function ClosedPositionsTab() {
                       {p.position_type}
                     </Badge>
                   </TableCell>
-                  <TableCell className="text-right font-mono text-muted-foreground">{fmt(p.entry_price)}</TableCell>
-                  <TableCell className="text-right font-mono text-muted-foreground">{fmt(p.exit_price)}</TableCell>
+                  <TableCell className="text-right font-mono text-muted-foreground">{fmt(p.entry_price, sc)}</TableCell>
+                  <TableCell className="text-right font-mono text-muted-foreground">{fmt(p.exit_price, sc)}</TableCell>
                   <TableCell className={`text-right font-mono font-semibold ${pnlColor(p.pnl_amount)}`}>
-                    {fmtPnl(p.pnl_amount)}
+                    {fmtPnl(p.pnl_amount, sc)}
                   </TableCell>
                   <TableCell className={`text-right font-mono ${pnlColor(p.pnl_percent)}`}>
                     {fmtPct(p.pnl_percent)}
@@ -553,7 +559,9 @@ function PendingPositionsTab() {
         </TableRow>
       </TableHeader>
       <TableBody>
-        {pending.map((p) => (
+        {pending.map((p) => {
+          const sc = symbolCur(p.symbol);
+          return (
           <TableRow key={p.id}>
             <TableCell className="font-mono font-bold text-foreground">{p.symbol}</TableCell>
             <TableCell>
@@ -569,9 +577,9 @@ function PendingPositionsTab() {
               </Badge>
             </TableCell>
             <TableCell className="text-right font-mono">{p.quantity}</TableCell>
-            <TableCell className="text-right font-mono text-muted-foreground">{fmt(p.entry_price)}</TableCell>
-            <TableCell className="text-right font-mono text-muted-foreground">{fmt(p.stop_loss)}</TableCell>
-            <TableCell className="text-right font-mono text-muted-foreground">{fmt(p.take_profit_1)}</TableCell>
+            <TableCell className="text-right font-mono text-muted-foreground">{fmt(p.entry_price, sc)}</TableCell>
+            <TableCell className="text-right font-mono text-muted-foreground">{fmt(p.stop_loss, sc)}</TableCell>
+            <TableCell className="text-right font-mono text-muted-foreground">{fmt(p.take_profit_1, sc)}</TableCell>
             <TableCell className="text-xs text-muted-foreground">{p.trigger_source ?? "\u2014"}</TableCell>
             <TableCell className="text-right">
               <div className="flex items-center justify-end gap-1">
@@ -629,7 +637,8 @@ function PendingPositionsTab() {
               </div>
             </TableCell>
           </TableRow>
-        ))}
+          );
+        })}
       </TableBody>
     </Table>
   );
@@ -788,10 +797,15 @@ function AutoTradeConfigSection() {
 // ────────────────────────────────────────────
 function SummaryBar({ positions }: { positions: DemoPosition[] }) {
   const { accountInfo } = useAccountContext();
-  const cur = accountInfo.currency === "EUR" ? "\u20ac" : "$";
   const isCFD = accountInfo.isCFD === true;
   const openOnly = positions.filter((p) => p.position_status === "OPEN");
-  const totalPnl = openOnly.reduce((acc, p) => acc + (p.pnl_amount ?? 0), 0);
+
+  // Split P&L by currency
+  const pnlEur = openOnly.filter((p) => p.symbol.endsWith(".DE")).reduce((acc, p) => acc + (p.pnl_amount ?? 0), 0);
+  const pnlUsd = openOnly.filter((p) => !p.symbol.endsWith(".DE")).reduce((acc, p) => acc + (p.pnl_amount ?? 0), 0);
+  const hasEur = openOnly.some((p) => p.symbol.endsWith(".DE"));
+  const hasUsd = openOnly.some((p) => !p.symbol.endsWith(".DE"));
+
   const totalMargin = isCFD
     ? openOnly.reduce((acc, p) => acc + (p.margin_required ?? 0), 0)
     : 0;
@@ -810,25 +824,33 @@ function SummaryBar({ positions }: { positions: DemoPosition[] }) {
       <span className="text-muted-foreground">
         Offene: <span className="font-semibold text-foreground">{openOnly.length} Positionen</span>
       </span>
-      <span className="text-muted-foreground">
-        Gesamt-P&L:{" "}
-        <span className={`font-mono font-semibold ${pnlColor(totalPnl)}`}>{fmtPnl(totalPnl, cur)}</span>
-      </span>
+      {hasUsd && (
+        <span className="text-muted-foreground">
+          P&L (USD):{" "}
+          <span className={`font-mono font-semibold ${pnlColor(pnlUsd)}`}>{fmtPnl(pnlUsd, "$")}</span>
+        </span>
+      )}
+      {hasEur && (
+        <span className="text-muted-foreground">
+          P&L (EUR):{" "}
+          <span className={`font-mono font-semibold ${pnlColor(pnlEur)}`}>{fmtPnl(pnlEur, "\u20ac")}</span>
+        </span>
+      )}
       {isCFD && totalMargin > 0 && (
         <span className="text-muted-foreground">
-          Margin: <span className="font-mono font-semibold text-foreground">{cur}{totalMargin.toFixed(0)}</span>
+          Margin: <span className="font-mono font-semibold text-foreground">{totalMargin.toFixed(0)}</span>
         </span>
       )}
       {isCFD && totalOvernight > 0 && (
         <span className="text-muted-foreground">
-          Overnight: <span className="font-mono font-semibold text-bearish">-{cur}{totalOvernight.toFixed(2)}</span>
+          Overnight: <span className="font-mono font-semibold text-bearish">-{totalOvernight.toFixed(2)}</span>
         </span>
       )}
       {best && (
         <span className="text-muted-foreground">
           Bester:{" "}
           <span className="font-mono font-semibold text-bullish">
-            {best.symbol} {fmtPnl(best.pnl_amount, cur)}
+            {best.symbol} {fmtPnl(best.pnl_amount, symbolCur(best.symbol))}
           </span>
         </span>
       )}
@@ -836,7 +858,7 @@ function SummaryBar({ positions }: { positions: DemoPosition[] }) {
         <span className="text-muted-foreground">
           Schlechtester:{" "}
           <span className="font-mono font-semibold text-bearish">
-            {worst.symbol} {fmtPnl(worst.pnl_amount, cur)}
+            {worst.symbol} {fmtPnl(worst.pnl_amount, symbolCur(worst.symbol))}
           </span>
         </span>
       )}
