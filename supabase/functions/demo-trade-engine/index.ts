@@ -900,6 +900,19 @@ async function handleUpdateTrailing(supabase: any, body: any) {
       }
     }
 
+    // V8.4: Guard — trailing stop darf NIEMALS rückwärts gehen (nur enger, nie weiter)
+    // Schützt vor Rückwärtsbewegung bei trailing_stop_percent Änderung durch AI
+    if (trailingStopPrice !== null && pos.trailing_stop_price) {
+      const oldTrailing = Number(pos.trailing_stop_price);
+      if (isLong) {
+        // LONG: Trailing Stop darf nur steigen (Gewinne sichern)
+        trailingStopPrice = Math.max(trailingStopPrice, oldTrailing);
+      } else {
+        // SHORT: Trailing Stop darf nur sinken (Gewinne sichern)
+        trailingStopPrice = Math.min(trailingStopPrice, oldTrailing);
+      }
+    }
+
     // V8.2: Log trailing stop changes to position_changes_log + system_logs
     const oldTrailingPrice = Number(pos.trailing_stop_price ?? 0);
     const posChanges: any[] = [];
