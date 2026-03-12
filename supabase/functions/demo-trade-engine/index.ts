@@ -639,7 +639,7 @@ async function handleCheckExits(supabase: any, body: any) {
             const newBalance = account.current_balance + partialPnl;
             await supabase.from("demo_accounts").update({
               current_balance: Math.round(newBalance * 100) / 100,
-              reserved_balance: Math.max(0, (account.reserved_balance ?? 0) - halfQty * entryPrice),
+              reserved_balance: Math.max(0, (account.reserved_balance ?? 0) - halfMargin), // V8.4: release margin, not notional
               margin_used: Math.max(0, Number(account.margin_used ?? 0) - halfMargin), // V8.3
               updated_at: new Date().toISOString(),
             }).eq("id", accountId);
@@ -1187,11 +1187,11 @@ async function openPosition(supabase: any, accountId: number, account: any, para
     return { status: "ERROR", reason: posError.message };
   }
 
-  // V8.3: Reserve balance + margin tracking
+  // V8.3/V8.4: Reserve balance = margin (not notional) + margin tracking
   await supabase
     .from("demo_accounts")
     .update({
-      reserved_balance: (account.reserved_balance ?? 0) + notionalValue,
+      reserved_balance: (account.reserved_balance ?? 0) + marginRequired,
       margin_used: currentMarginUsed + marginRequired,
       updated_at: new Date().toISOString(),
     })
@@ -1277,7 +1277,7 @@ async function closePosition(supabase: any, position: any, exitPrice: number, cl
     const tradeCost = quantity * entryPrice;
     const tradeMargin = Number(position.margin_required ?? tradeCost); // V8.3: use margin, fallback to cost
     const newBalance = account.current_balance + pnlAmount;
-    const newReserved = Math.max(0, (account.reserved_balance ?? 0) - tradeCost);
+    const newReserved = Math.max(0, (account.reserved_balance ?? 0) - tradeMargin); // V8.4: release margin, not notional
     const newMarginUsed = Math.max(0, Number(account.margin_used ?? 0) - tradeMargin); // V8.3
     const totalPnl = (account.total_pnl ?? 0) + pnlAmount;
     const initialBalance = Number(account.initial_balance ?? 100000); // V8.3: dynamic, not hardcoded
@@ -1629,7 +1629,7 @@ async function handleCheckPending(supabase: any, body: any) {
 
       // Reserve balance + margin
       await supabase.from("demo_accounts").update({
-        reserved_balance: (account.reserved_balance ?? 0) + pendCost,
+        reserved_balance: (account.reserved_balance ?? 0) + pendMargin, // V8.4: margin statt notional
         margin_used: Number(account.margin_used ?? 0) + pendMargin, // V8.3
         updated_at: new Date().toISOString(),
       }).eq("id", accountId);
