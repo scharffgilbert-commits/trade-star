@@ -197,24 +197,28 @@ Deno.serve(async (req) => {
       }
     }
 
-    // 5. Auch reserved_balance & Account-Bilanz aktualisieren
+    // 5. reserved_balance & margin_used reconciliation (alle 15 Min.)
+    // V8.4: Nutze margin_required statt qty*entry für CFD-Accounts (Leverage)
     const accountIds = [...new Set(positions.map((p: any) => p.account_id))];
     for (const accId of accountIds) {
-      // Summe aller offenen Positionen (Notional Value)
       const { data: accPositions } = await supabase
         .from("demo_positions")
-        .select("quantity, entry_price")
+        .select("quantity, entry_price, margin_required")
         .eq("account_id", accId)
         .eq("position_status", "OPEN");
 
       if (accPositions?.length) {
-        const totalReserved = accPositions.reduce(
-          (sum: number, p: any) => sum + Number(p.quantity) * Number(p.entry_price),
+        // margin_required = qty*price/leverage (CFD) oder qty*price (Cash)
+        const totalMargin = accPositions.reduce(
+          (sum: number, p: any) => sum + Number(p.margin_required ?? (Number(p.quantity) * Number(p.entry_price))),
           0
         );
         await supabase
           .from("demo_accounts")
-          .update({ reserved_balance: Math.round(totalReserved * 100) / 100 })
+          .update({
+            reserved_balance: Math.round(totalMargin * 100) / 100,
+            margin_used: Math.round(totalMargin * 100) / 100,
+          })
           .eq("id", accId);
       }
     }
